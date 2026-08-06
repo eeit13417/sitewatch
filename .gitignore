@@ -1,0 +1,27 @@
+# Go
+/api/bin/
+/ingestion/bin/
+*.exe
+*.test
+*.out
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Env
+.env
+*.local
+
+# Docker
+infra/postgres/data/
+infra/mongo/data/
+infra/mosquitto/data/
+infra/mosquitto/log/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

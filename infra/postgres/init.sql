@@ -1,0 +1,2 @@
+-- Phase 1 will add the real schema (sites, devices, alert_rules, alerts, users).
+-- Kept here so docker-compose has a valid mount target from Phase 0 onward.

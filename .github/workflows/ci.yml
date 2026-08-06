@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, ingestion]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: false
+
+      - name: go vet
+        working-directory: ${{ matrix.service }}
+        run: go vet ./...
+
+      - name: gofmt check
+        working-directory: ${{ matrix.service }}
+        run: |
+          fmt_out=$(gofmt -l .)
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt'ed:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: go build
+        working-directory: ${{ matrix.service }}
+        run: go build ./...
+
+      - name: go test
+        working-directory: ${{ matrix.service }}
+        run: go test ./... -v
