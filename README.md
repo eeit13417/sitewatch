@@ -58,6 +58,23 @@ Watch the raw MQTT traffic in another terminal:
 docker exec sitewatch-mqtt mosquitto_sub -t 'sitewatch/#' -v
 ```
 
+## Testing
+
+Simulator unit tests (no Docker required — pure logic):
+
+```bash
+cd simulator
+npm test
+```
+
+Database schema/seed-data/constraint checks (requires the Postgres container to be running with `psql` on the host, or run it inside the container: `docker cp scripts/verify-db.sh sitewatch-postgres:/tmp/ && docker exec sitewatch-postgres bash /tmp/verify-db.sh`):
+
+```bash
+PGPASSWORD=sitewatch ./scripts/verify-db.sh
+```
+
+Both run in CI on every push — see `.github/workflows/ci.yml` (`simulator-test`, `db-schema` jobs). Broader integration tests (testcontainers, once `api`/`ingestion` exist) and E2E tests (Playwright, once the frontend exists) are planned for Phase 2 and Phase 3 respectively — see `docs/PROJECT_PLAN.md`.
+
 Run the API service locally:
 
 ```bash
@@ -74,6 +91,7 @@ ingestion/    Go MQTT ingestion service
 simulator/    Node + TypeScript device simulator (publishes fake telemetry over MQTT)
 frontend/     React + TypeScript dashboard (Phase 3)
 infra/        docker-compose.yml, Mosquitto config, Postgres schema + seed data
+scripts/      repeatable verification scripts (e.g. verify-db.sh)
 docs/         architecture notes, project plan, MQTT contract, runbooks (added over time)
 ```
 
