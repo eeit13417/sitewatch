@@ -22,10 +22,11 @@ Practice project for the Delta Electronics (Thailand) Software & Digital Enablem
 **Phase 0 — Infrastructure skeleton** ✅
 Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), placeholder Go services, basic CI (vet/fmt/build/test).
 
-**Phase 1 — Data layer and device simulator**
-- PostgreSQL schema: `sites`, `devices`, `alert_rules`, `alerts`, `users`
-- MongoDB collections: `telemetry_raw`, `application_logs`
-- Device simulator script publishing fake meter/sensor readings over MQTT on an interval
+**Phase 1 — Data layer and device simulator** ✅
+- PostgreSQL schema: `sites`, `devices`, `alert_rules`, `alerts`, `users` (`infra/postgres/init.sql`), reviewed and hardened (derived MQTT topic instead of stored, explicit `ON DELETE` policy, `resolved_by`, `alerts.severity` CHECK)
+- MongoDB document contract for `telemetry_raw` / `application_logs` defined in [`docs/mqtt-contract.md`](mqtt-contract.md) (write path itself lands in Phase 2)
+- MQTT topic + payload contract documented; device simulator (`simulator/`, Node + TS) publishes realistic drifting telemetry for all 7 seeded devices, with occasional threshold-testing spikes and simulated offline dropout
+- Verified end-to-end against the real containers: schema, seed data, constraint enforcement, and live MQTT traffic all checked with `docker compose` + `mosquitto_sub`
 
 **Phase 2 — Backend core services**
 - `ingestion`: MQTT subscriber → writes raw telemetry to MongoDB, aggregates into PostgreSQL
