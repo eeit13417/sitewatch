@@ -42,3 +42,52 @@ jobs:
       - name: go test
         working-directory: ${{ matrix.service }}
         run: go test ./... -v
+
+  simulator-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm ci
+        working-directory: simulator
+        run: npm ci
+
+      - name: run tests
+        working-directory: simulator
+        run: npm test
+
+  db-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sitewatch
+          POSTGRES_PASSWORD: sitewatch
+          POSTGRES_DB: sitewatch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sitewatch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: apply schema
+        run: PGPASSWORD=sitewatch psql -h localhost -U sitewatch -d sitewatch -f infra/postgres/init.sql
+
+      - name: verify schema
+        env:
+          PGHOST: localhost
+          PGUSER: sitewatch
+          PGPASSWORD: sitewatch
+          PGDATABASE: sitewatch
+        run: |
+          chmod +x scripts/verify-db.sh
+          ./scripts/verify-db.sh
