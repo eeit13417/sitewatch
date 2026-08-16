@@ -28,11 +28,11 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 - MQTT topic + payload contract documented; device simulator (`simulator/`, Node + TS) publishes realistic drifting telemetry for all 7 seeded devices, with occasional threshold-testing spikes and simulated offline dropout
 - Verified end-to-end against the real containers: schema, seed data, constraint enforcement, and live MQTT traffic all checked with `docker compose` + `mosquitto_sub`
 
-**Phase 2 — Backend core services**
-- `ingestion`: MQTT subscriber → writes raw telemetry to MongoDB, aggregates into PostgreSQL
-- `api`: REST endpoints for device CRUD, telemetry queries, alert queries; OpenAPI spec
-- Alert engine: threshold rules (e.g. temp > X, abnormal consumption) → writes alerts
-- Unit tests + integration tests (testcontainers against real Postgres/Mongo)
+**Phase 2 — Backend core services** ✅ (code complete; awaiting a local Docker session to run the testcontainers suite and a manual end-to-end pass — see PR)
+- `ingestion`: bounded worker-pool MQTT subscriber (`sitewatch/+/+/telemetry`) → writes raw telemetry to MongoDB `telemetry_raw`, debounced `devices.last_seen_at` updates to PostgreSQL, then runs the alert engine
+- Alert engine (`ingestion/alerts.go`, design in [`docs/alert-engine.md`](alert-engine.md)): pure rule-evaluation function + a dedup/auto-resolve state machine keyed on "at most one active alert per rule" — deliberately no debounce/hysteresis yet, that gap is a planned Phase 6 incident
+- `api`: REST endpoints per [`docs/openapi.yaml`](openapi.yaml) — read-only `sites`/`devices`/`devices/{id}/telemetry` (the one endpoint reading MongoDB), full alert workflow (`list`, `acknowledge`, `resolve`), full `alert_rules` CRUD. No auth yet (deliberately deferred, see JD mapping notes below)
+- Unit tests (`ingestion/alerts_test.go`, pure logic, no DB) + integration tests (`*/integration_test.go`, `testcontainers-go`, real Postgres seeded from the actual `infra/postgres/init.sql` + real MongoDB) — both wired into CI (`integration-test` job)
 
 **Phase 3 — Frontend dashboard**
 - React + TS: site overview, device list, live trend charts (WebSocket or polling), alert management

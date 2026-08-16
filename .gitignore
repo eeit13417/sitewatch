@@ -1,6 +1,8 @@
 # Go
 /api/bin/
 /ingestion/bin/
+/api/api
+/ingestion/ingestion
 *.exe
 *.test
 *.out

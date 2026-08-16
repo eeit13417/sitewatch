@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache: false
 
       - name: go vet
@@ -42,6 +42,28 @@ jobs:
       - name: go test
         working-directory: ${{ matrix.service }}
         run: go test ./... -v
+
+  integration-test:
+    name: integration-${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, ingestion]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+
+      # testcontainers-go drives the Docker daemon already available on
+      # GitHub-hosted runners directly — no `services:` block needed, it
+      # starts and tears down its own Postgres/Mongo containers per test
+      # (see api/integration_test.go, ingestion/integration_test.go).
+      - name: go test (testcontainers)
+        working-directory: ${{ matrix.service }}
+        run: go test -tags=integration ./... -v -timeout 5m
 
   simulator-test:
     runs-on: ubuntu-latest

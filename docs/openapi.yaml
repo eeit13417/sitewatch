@@ -1,0 +1,255 @@
+openapi: 3.0.3
+info:
+  title: SiteWatch API
+  version: "0.2.0"
+  description: >
+    REST API for the SiteWatch monitoring platform. Sites and devices are
+    read-only here (provisioned via infra/postgres/init.sql seed data);
+    write endpoints are scoped to the alert workflow, which is this
+    project's demonstrated depth. No authentication yet — see
+    docs/PROJECT_PLAN.md for why that's a deliberately deferred scope
+    decision, not an oversight.
+servers:
+  - url: http://localhost:8080
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      responses:
+        "200": { description: OK }
+
+  /sites:
+    get:
+      summary: List sites
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Site" }
+
+  /devices:
+    get:
+      summary: List devices, optionally filtered by site
+      parameters:
+        - name: site_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Device" }
+
+  /devices/{id}:
+    get:
+      summary: Get a device
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "404": { description: Not found }
+
+  /devices/{id}/telemetry:
+    get:
+      summary: Recent raw telemetry for a device (reads MongoDB, not Postgres)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 1000 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TelemetryPoint" }
+
+  /alerts:
+    get:
+      summary: List alerts
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, acknowledged, resolved] } }
+        - { name: device_id, in: query, schema: { type: string, format: uuid } }
+        - { name: site_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 500 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Alert" }
+
+  /alerts/{id}/acknowledge:
+    post:
+      summary: Acknowledge an open alert
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "409": { description: Alert is not in a state that can be acknowledged (already resolved) }
+
+  /alerts/{id}/resolve:
+    post:
+      summary: Manually resolve an alert
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "409": { description: Alert is already resolved }
+
+  /alert-rules:
+    get:
+      summary: List alert rules
+      parameters:
+        - { name: device_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AlertRule" }
+    post:
+      summary: Create an alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertRuleInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+
+  /alert-rules/{id}:
+    patch:
+      summary: Update an alert rule (e.g. change threshold or disable it)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertRuleInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+    delete:
+      summary: Delete an alert rule
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+        "409": { description: Rule still has alerts referencing it (ON DELETE RESTRICT) }
+
+components:
+  schemas:
+    Site:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string, enum: [data_center, building, factory] }
+        location: { type: string }
+
+    Device:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        site_id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string, enum: [smart_meter, temp_sensor, humidity_sensor, ups, hvac] }
+        last_seen_at: { type: string, format: date-time, nullable: true }
+
+    TelemetryPoint:
+      type: object
+      properties:
+        device_id: { type: string, format: uuid }
+        readings: { type: object, additionalProperties: { type: number } }
+        ts: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+
+    AlertRule:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        metric: { type: string }
+        operator: { type: string, enum: [gt, gte, lt, lte] }
+        threshold: { type: number }
+        severity: { type: string, enum: [warning, critical] }
+        enabled: { type: boolean }
+
+    AlertRuleInput:
+      type: object
+      required: [device_id, metric, operator, threshold, severity]
+      properties:
+        device_id: { type: string, format: uuid }
+        metric: { type: string }
+        operator: { type: string, enum: [gt, gte, lt, lte] }
+        threshold: { type: number }
+        severity: { type: string, enum: [warning, critical] }
+        enabled: { type: boolean, default: true }
+
+    Alert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        alert_rule_id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        triggered_value: { type: number }
+        severity: { type: string, enum: [warning, critical] }
+        status: { type: string, enum: [open, acknowledged, resolved] }
+        triggered_at: { type: string, format: date-time }
+        acknowledged_at: { type: string, format: date-time, nullable: true }
+        acknowledged_by: { type: string, format: uuid, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        resolved_by: { type: string, format: uuid, nullable: true }
