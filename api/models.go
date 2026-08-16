@@ -18,10 +18,10 @@ type Device struct {
 }
 
 type TelemetryPoint struct {
-	DeviceID   string             `json:"device_id"`
-	Readings   map[string]float64 `json:"readings"`
-	Ts         time.Time          `json:"ts"`
-	ReceivedAt time.Time          `json:"received_at"`
+	DeviceID   string             `json:"device_id" bson:"device_id"`
+	Readings   map[string]float64 `json:"readings" bson:"readings"`
+	Ts         time.Time          `json:"ts" bson:"ts"`
+	ReceivedAt time.Time          `json:"received_at" bson:"received_at"`
 }
 
 type AlertRule struct {

@@ -174,6 +174,17 @@ func TestGetDeviceTelemetry_ReadsFromMongoChronologically(t *testing.T) {
 	if len(points) != 3 {
 		t.Fatalf("expected 3 telemetry points, got %d", len(points))
 	}
+	for i, p := range points {
+		// Catches BSON field-mapping bugs (a Go field with no `bson` tag
+		// silently decodes to its zero value instead of an error) that a
+		// count-and-ordering check alone would miss.
+		if p.DeviceID != tempSensor01ID {
+			t.Fatalf("point %d: expected device_id %q, got %q", i, tempSensor01ID, p.DeviceID)
+		}
+		if p.ReceivedAt.IsZero() {
+			t.Fatalf("point %d: received_at decoded as zero value", i)
+		}
+	}
 	for i := 0; i < len(points)-1; i++ {
 		if points[i].Ts.After(points[i+1].Ts) {
 			t.Fatalf("expected chronological order, point %d (%v) is after point %d (%v)",

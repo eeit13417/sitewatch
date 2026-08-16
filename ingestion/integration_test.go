@@ -96,7 +96,10 @@ func TestMaybeUpdateLastSeen_DebouncesWithinWindow(t *testing.T) {
 	ctx := context.Background()
 	deviceID := "a1111111-0000-0000-0000-000000000001" // smart-meter-01
 
-	t1 := time.Now().UTC()
+	// Postgres TIMESTAMPTZ stores microsecond precision; Go's time.Now()
+	// carries nanoseconds. Truncate before comparing round-tripped values
+	// or every comparison flakes on the sub-microsecond remainder.
+	t1 := time.Now().UTC().Truncate(time.Microsecond)
 	if err := store.MaybeUpdateLastSeen(ctx, deviceID, t1); err != nil {
 		t.Fatalf("first update: %v", err)
 	}
