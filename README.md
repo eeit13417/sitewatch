@@ -20,7 +20,7 @@ Observability: Prometheus + Grafana, structured JSON logs with correlation IDs
 
 ## Status
 
-Phase 1 (data layer + device simulator) — PostgreSQL schema and seed data are live (`sites`, `devices`, `alert_rules`, `alerts`, `users`), and the device simulator publishes realistic telemetry for all 7 seeded devices over MQTT, following [`docs/mqtt-contract.md`](docs/mqtt-contract.md). `api` and `ingestion` are still placeholder Go services. See `docs/PROJECT_PLAN.md` for what's next (Phase 2: ingestion + REST API + alert engine).
+Phase 2 (backend core services) — `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)); `api` exposes the REST surface in [`docs/openapi.yaml`](docs/openapi.yaml) (sites/devices read paths, full alert workflow, alert-rule CRUD). See `docs/PROJECT_PLAN.md` for what's next (Phase 3: frontend dashboard).
 
 ## Prerequisites
 
@@ -58,6 +58,23 @@ Watch the raw MQTT traffic in another terminal:
 docker exec sitewatch-mqtt mosquitto_sub -t 'sitewatch/#' -v
 ```
 
+Run `ingestion` (consumes that same MQTT traffic, writes to Mongo/Postgres, evaluates alerts):
+
+```bash
+cd ingestion
+go run .
+```
+
+Run `api` in another terminal, then exercise it:
+
+```bash
+cd api
+go run .
+curl localhost:8080/sites
+curl localhost:8080/devices
+curl "localhost:8080/alerts?status=open"
+```
+
 ## Testing
 
 Simulator unit tests (no Docker required — pure logic):
@@ -73,15 +90,21 @@ Database schema/seed-data/constraint checks (requires the Postgres container to 
 PGPASSWORD=sitewatch ./scripts/verify-db.sh
 ```
 
-Both run in CI on every push — see `.github/workflows/ci.yml` (`simulator-test`, `db-schema` jobs). Broader integration tests (testcontainers, once `api`/`ingestion` exist) and E2E tests (Playwright, once the frontend exists) are planned for Phase 2 and Phase 3 respectively — see `docs/PROJECT_PLAN.md`.
-
-Run the API service locally:
+`ingestion`/`api` unit tests (pure logic, no Docker):
 
 ```bash
-cd api
-go run .
-curl localhost:8080/healthz
+cd ingestion && go test ./...   # alert engine rule evaluation
+cd api && go test ./...         # no pure-logic tests yet — see integration tests below
 ```
+
+`ingestion`/`api` integration tests — real Postgres (seeded from the actual `infra/postgres/init.sql`) and MongoDB via `testcontainers-go`, no docker-compose needed, just a running Docker daemon:
+
+```bash
+cd ingestion && go test -tags=integration ./... -v
+cd api && go test -tags=integration ./... -v
+```
+
+All of the above run in CI on every push — see `.github/workflows/ci.yml` (`lint-and-build`, `integration-test`, `simulator-test`, `db-schema` jobs). E2E tests (Playwright) are planned for Phase 3 once the frontend exists — see `docs/PROJECT_PLAN.md`.
 
 ## Repository layout
 
