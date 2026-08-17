@@ -7,37 +7,36 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/sitewatch/shared"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	loadRootEnv()
+	shared.LoadRootEnv()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pgPool, err := pgxpool.New(ctx, os.Getenv("POSTGRES_URL"))
+	pgPool, err := shared.NewPostgresPool(ctx)
 	if err != nil {
 		logger.Error("connect postgres", "error", err)
 		os.Exit(1)
 	}
 	defer pgPool.Close()
 
-	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(os.Getenv("MONGO_URL")))
+	mongoClient, err := shared.NewMongoClient(ctx)
 	if err != nil {
 		logger.Error("connect mongo", "error", err)
 		os.Exit(1)
 	}
-	defer mongoClient.Disconnect(context.Background())
+	defer func() {
+		if err := mongoClient.Disconnect(context.Background()); err != nil {
+			logger.Warn("mongo disconnect", "error", err)
+		}
+	}()
 
 	app := &App{pg: pgPool, mongo: mongoClient, mongoDB: os.Getenv("MONGO_DB"), logger: logger}
 	mux := routes(app)
@@ -49,7 +48,11 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: mux,
+		Handler: withCORS(mux),
+		// Unset, a slow/malicious client can hold a connection open
+		// indefinitely while trickling in headers, tying up a goroutine
+		// per connection (a Slowloris DoS) — flagged by gosec (G112).
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
@@ -90,13 +93,24 @@ func routes(app *App) http.Handler {
 	return mux
 }
 
-func loadRootEnv() {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return
+// withCORS lets the Phase 3 browser frontend call this API cross-origin.
+// CORS_ALLOWED_ORIGIN defaults to the local Vite dev server port rather
+// than "*" — a wildcard origin is the kind of thing a security linter
+// flags for good reason, and there's no case here where any origin should
+// be allowed to call this API.
+func withCORS(h http.Handler) http.Handler {
+	origin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	if origin == "" {
+		origin = "http://localhost:5173"
 	}
-	path := filepath.Join(filepath.Dir(thisFile), "..", ".env")
-	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("could not load .env", "path", path, "error", err)
-	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

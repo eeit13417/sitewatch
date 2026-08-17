@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [api, ingestion]
+        service: [api, ingestion, shared]
     steps:
       - uses: actions/checkout@v4
 
@@ -20,10 +20,6 @@ jobs:
         with:
           go-version: "1.25"
           cache: false
-
-      - name: go vet
-        working-directory: ${{ matrix.service }}
-        run: go vet ./...
 
       - name: gofmt check
         working-directory: ${{ matrix.service }}
@@ -34,6 +30,17 @@ jobs:
             echo "$fmt_out"
             exit 1
           fi
+
+      # Covers go vet plus staticcheck/errcheck/unused/gosec — gosec is the
+      # automated backstop for the project's security rule (see CLAUDE.md).
+      # --build-tags=integration so the testcontainers-based test files get
+      # linted too, not just the non-tagged source.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2
+          working-directory: ${{ matrix.service }}
+          args: --build-tags=integration
 
       - name: go build
         working-directory: ${{ matrix.service }}

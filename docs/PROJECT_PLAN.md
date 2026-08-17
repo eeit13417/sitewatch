@@ -28,11 +28,17 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 - MQTT topic + payload contract documented; device simulator (`simulator/`, Node + TS) publishes realistic drifting telemetry for all 7 seeded devices, with occasional threshold-testing spikes and simulated offline dropout
 - Verified end-to-end against the real containers: schema, seed data, constraint enforcement, and live MQTT traffic all checked with `docker compose` + `mosquitto_sub`
 
-**Phase 2 — Backend core services** ✅ (code complete; awaiting a local Docker session to run the testcontainers suite and a manual end-to-end pass — see PR)
+**Phase 2 — Backend core services** ✅ verified end-to-end against real containers (testcontainers suite + a manual pass: fresh docker-compose stack, ingestion + api + the real simulator, full alert lifecycle exercised live)
 - `ingestion`: bounded worker-pool MQTT subscriber (`sitewatch/+/+/telemetry`) → writes raw telemetry to MongoDB `telemetry_raw`, debounced `devices.last_seen_at` updates to PostgreSQL, then runs the alert engine
 - Alert engine (`ingestion/alerts.go`, design in [`docs/alert-engine.md`](alert-engine.md)): pure rule-evaluation function + a dedup/auto-resolve state machine keyed on "at most one active alert per rule" — deliberately no debounce/hysteresis yet, that gap is a planned Phase 6 incident
-- `api`: REST endpoints per [`docs/openapi.yaml`](openapi.yaml) — read-only `sites`/`devices`/`devices/{id}/telemetry` (the one endpoint reading MongoDB), full alert workflow (`list`, `acknowledge`, `resolve`), full `alert_rules` CRUD. No auth yet (deliberately deferred, see JD mapping notes below)
+- `api`: REST endpoints per [`docs/openapi.yaml`](openapi.yaml) — read-only `sites`/`devices`/`devices/{id}/telemetry` (the one endpoint reading MongoDB), full alert workflow (`list`, `acknowledge`, `resolve`), full `alert_rules` CRUD
 - Unit tests (`ingestion/alerts_test.go`, pure logic, no DB) + integration tests (`*/integration_test.go`, `testcontainers-go`, real Postgres seeded from the actual `infra/postgres/init.sql` + real MongoDB) — both wired into CI (`integration-test` job)
+- **Hardening pass** (see `CLAUDE.md` engineering standards): extracted `shared/` (env loading, Postgres/Mongo connection setup, tunable pool size) so `api` and `ingestion` stop duplicating it; added a MongoDB index on `telemetry_raw` (device_id, ts) — that query was an unindexed collection scan before; added `golangci-lint` + `gosec` to CI, which caught and fixed a real Slowloris DoS gap (no `ReadHeaderTimeout` on the API's `http.Server`) plus a few unchecked-error findings; added CORS for the Phase 3 frontend; fixed a bug where `deleteAlertRule` mislabeled any DB error as the FK-conflict case instead of checking the actual Postgres error code
+
+**Known deferred security gaps (Phase 2)** — written down deliberately, not silently skipped:
+- No authentication on the API — every endpoint is open. Out of scope because the JD doesn't call out auth as a target skill and this project's depth is meant to be elsewhere; would need to land before this was ever exposed beyond localhost.
+- No rate limiting — a single client can call any endpoint as fast as it wants. Reasonable follow-up for Phase 5 (CI/CD & production hardening) alongside the free-tier deploy step.
+- Mosquitto broker allows anonymous connect/publish/subscribe (`infra/mosquitto/mosquitto.conf`) — fine for a broker only reachable on localhost/docker-network in this setup, called out there as dev-only.
 
 **Phase 3 — Frontend dashboard**
 - React + TS: site overview, device list, live trend charts (WebSocket or polling), alert management
