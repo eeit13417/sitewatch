@@ -36,7 +36,7 @@ jobs:
       # --build-tags=integration so the testcontainers-based test files get
       # linted too, not just the non-tagged source.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           working-directory: ${{ matrix.service }}
