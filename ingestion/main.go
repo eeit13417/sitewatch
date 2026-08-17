@@ -2,21 +2,15 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/sitewatch/shared"
 )
 
 // workerCount bounds how many messages are processed concurrently — enough
@@ -36,26 +30,36 @@ type job struct {
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	loadRootEnv()
+	shared.LoadRootEnv()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pgPool, err := pgxpool.New(ctx, os.Getenv("POSTGRES_URL"))
+	pgPool, err := shared.NewPostgresPool(ctx)
 	if err != nil {
 		logger.Error("connect postgres", "error", err)
 		os.Exit(1)
 	}
 	defer pgPool.Close()
 
-	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(os.Getenv("MONGO_URL")))
+	mongoClient, err := shared.NewMongoClient(ctx)
 	if err != nil {
 		logger.Error("connect mongo", "error", err)
 		os.Exit(1)
 	}
-	defer mongoClient.Disconnect(context.Background())
+	defer func() {
+		if err := mongoClient.Disconnect(context.Background()); err != nil {
+			logger.Warn("mongo disconnect", "error", err)
+		}
+	}()
 
-	store := NewStore(pgPool, mongoClient, os.Getenv("MONGO_DB"))
+	mongoDB := os.Getenv("MONGO_DB")
+	if err := shared.EnsureTelemetryIndexes(ctx, mongoClient, mongoDB); err != nil {
+		logger.Error("ensure mongo indexes", "error", err)
+		os.Exit(1)
+	}
+
+	store := NewStore(pgPool, mongoClient, mongoDB)
 
 	jobs := make(chan job, queueSize)
 	for i := 0; i < workerCount; i++ {
@@ -172,19 +176,5 @@ func decisionLabel(d Decision) string {
 		return "auto_resolve"
 	default:
 		return "none"
-	}
-}
-
-// loadRootEnv loads the repo-root .env (two directories up from this file,
-// whether running via `go run .` from source or a built binary in the same
-// tree) so local dev doesn't need every var exported manually.
-func loadRootEnv() {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return
-	}
-	path := filepath.Join(filepath.Dir(thisFile), "..", ".env")
-	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("could not load .env", "path", path, "error", err)
 	}
 }

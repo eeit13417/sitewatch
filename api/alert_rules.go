@@ -6,7 +6,14 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// postgresForeignKeyViolation is the standard SQLSTATE for a foreign key
+// constraint violation — used here to tell "this alert_rule still has
+// alerts referencing it" (a real, expected 409) apart from any other
+// database failure (a 500, and worth logging, not silently relabeled).
+const postgresForeignKeyViolation = "23503"
 
 func (a *App) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.URL.Query().Get("device_id")
@@ -108,8 +115,13 @@ func (a *App) deleteAlertRule(w http.ResponseWriter, r *http.Request) {
 
 	tag, err := a.pg.Exec(r.Context(), `DELETE FROM alert_rules WHERE id = $1`, id)
 	if err != nil {
-		// Most likely ON DELETE RESTRICT from alerts.alert_rule_id.
-		writeError(w, http.StatusConflict, "alert rule still has alerts referencing it")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
+			writeError(w, http.StatusConflict, "alert rule still has alerts referencing it")
+			return
+		}
+		a.logger.Error("delete alert_rule", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete alert rule")
 		return
 	}
 	if tag.RowsAffected() == 0 {

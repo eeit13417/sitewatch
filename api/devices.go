@@ -89,7 +89,11 @@ func (a *App) getDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to query telemetry")
 		return
 	}
-	defer cursor.Close(r.Context())
+	defer func() {
+		if err := cursor.Close(r.Context()); err != nil {
+			a.logger.Warn("close telemetry_raw cursor", "error", err)
+		}
+	}()
 
 	points := []TelemetryPoint{}
 	for cursor.Next(r.Context()) {
