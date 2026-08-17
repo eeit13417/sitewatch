@@ -100,7 +100,11 @@ INSERT INTO alert_rules (device_id, metric, operator, threshold, severity) VALUE
     ('a1111111-0000-0000-0000-000000000002', 'temperature_c', 'gt', 32, 'critical'),
     ('a1111111-0000-0000-0000-000000000001', 'power_kw', 'gt', 50, 'warning');
 
-INSERT INTO users (email, name, role) VALUES
-    ('ops@sitewatch.local', 'Site Operator', 'operator');
+-- Fixed id, same reasoning as the sites/devices seed rows above: the
+-- Phase 3 frontend has no login flow (no auth exists yet — see
+-- docs/PROJECT_PLAN.md), so it references this "acting user" by a known,
+-- stable id (VITE_ACTING_USER_ID) instead of discovering it at runtime.
+INSERT INTO users (id, email, name, role) VALUES
+    ('33333333-0000-0000-0000-000000000001', 'ops@sitewatch.local', 'Site Operator', 'operator');
 
 COMMIT;

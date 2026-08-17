@@ -20,7 +20,7 @@ Observability: Prometheus + Grafana, structured JSON logs with correlation IDs
 
 ## Status
 
-Phase 2 (backend core services) — `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)); `api` exposes the REST surface in [`docs/openapi.yaml`](docs/openapi.yaml) (sites/devices read paths, full alert workflow, alert-rule CRUD). See `docs/PROJECT_PLAN.md` for what's next (Phase 3: frontend dashboard).
+Phase 3 (frontend dashboard) — `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)). See `docs/PROJECT_PLAN.md` for what's next (Phase 4: observability).
 
 ## Prerequisites
 
@@ -75,6 +75,17 @@ curl localhost:8080/devices
 curl "localhost:8080/alerts?status=open"
 ```
 
+Run the frontend (needs `ingestion` + `api` + infra all already running):
+
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
 ## Testing
 
 Simulator unit tests (no Docker required — pure logic):
@@ -104,15 +115,24 @@ cd ingestion && go test -tags=integration ./... -v
 cd api && go test -tags=integration ./... -v
 ```
 
-All of the above run in CI on every push — see `.github/workflows/ci.yml` (`lint-and-build`, `integration-test`, `simulator-test`, `db-schema` jobs). E2E tests (Playwright) are planned for Phase 3 once the frontend exists — see `docs/PROJECT_PLAN.md`.
+Frontend E2E (Playwright, against the real running stack — infra + `ingestion` + `api` + the Vite dev server all need to already be up, see Quick start above):
+
+```bash
+cd frontend
+npx playwright install --with-deps chromium   # once
+npm run test:e2e
+```
+
+All of the above run in CI on every push — see `.github/workflows/ci.yml` (`lint-and-build`, `integration-test`, `simulator-test`, `db-schema`, `frontend-build`, `frontend-e2e` jobs).
 
 ## Repository layout
 
 ```
 api/          Go REST API service
 ingestion/    Go MQTT ingestion service
+shared/       Go module shared by api/ingestion (env loading, DB connection setup)
 simulator/    Node + TypeScript device simulator (publishes fake telemetry over MQTT)
-frontend/     React + TypeScript dashboard (Phase 3)
+frontend/     React + TypeScript dashboard (Vite, TanStack Query, Playwright E2E)
 infra/        docker-compose.yml, Mosquitto config, Postgres schema + seed data
 scripts/      repeatable verification scripts (e.g. verify-db.sh)
 docs/         architecture notes, project plan, MQTT contract, runbooks (added over time)

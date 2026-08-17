@@ -89,6 +89,86 @@ jobs:
         working-directory: simulator
         run: npm test
 
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: build
+        working-directory: frontend
+        run: npm run build
+
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Real infra, real ingestion, real api — same stack a developer runs
+      # locally (see README's Quick start), not a mocked backend. Ports
+      # accepting connections is treated as "ready"; for a fresh
+      # docker-compose init that's close enough in practice, same as the
+      # health-wait pattern already used for Postgres in db-schema.
+      - name: start infra
+        run: |
+          cp .env.example .env
+          cd infra
+          docker compose --env-file ../.env up -d
+          timeout 60 bash -c 'until (echo > /dev/tcp/localhost/5432) 2>/dev/null; do sleep 1; done'
+          timeout 60 bash -c 'until (echo > /dev/tcp/localhost/27017) 2>/dev/null; do sleep 1; done'
+          timeout 60 bash -c 'until (echo > /dev/tcp/localhost/1883) 2>/dev/null; do sleep 1; done'
+
+      - name: start ingestion + api
+        run: |
+          (cd ingestion && nohup go run . > /tmp/ingestion.log 2>&1 &)
+          (cd api && nohup go run . > /tmp/api.log 2>&1 &)
+          timeout 30 bash -c 'until curl -sf localhost:8080/healthz >/dev/null; do sleep 1; done'
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: start frontend dev server
+        working-directory: frontend
+        run: |
+          nohup npm run dev -- --host > /tmp/frontend.log 2>&1 &
+          timeout 30 bash -c 'until curl -sf localhost:5173 >/dev/null; do sleep 1; done'
+
+      - name: E2E tests
+        working-directory: frontend
+        run: npx playwright test
+
+      - name: service logs on failure
+        if: failure()
+        run: |
+          echo "--- ingestion ---"; cat /tmp/ingestion.log || true
+          echo "--- api ---"; cat /tmp/api.log || true
+          echo "--- frontend ---"; cat /tmp/frontend.log || true
+
   db-schema:
     runs-on: ubuntu-latest
     services:
