@@ -11,5 +11,5 @@ test("site overview → devices → device detail", async ({ page }) => {
   await page.getByRole("link", { name: "temp-sensor-01" }).click();
   await expect(page.getByRole("heading", { name: /temp-sensor-01/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Alerts" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Recent alerts/ })).toBeVisible();
 });

@@ -1,60 +1,91 @@
-import type { Alert } from "../api/types";
-import { AlertSeverityBadge } from "./AlertSeverityBadge";
+import { Link } from "react-router"
+import type { Alert, Device } from "../api/types"
+import { formatRelative, formatTimestamp } from "@/lib/utils"
+import { AlertActions } from "./AlertActions"
+import { AlertStatusPill, SeverityBadge } from "./indicators"
+import { EmptyRow, Panel } from "./primitives"
 
 interface AlertTableProps {
-  alerts: Alert[];
-  onAcknowledge: (id: string) => void;
-  onResolve: (id: string) => void;
-  /** id of the alert currently being mutated, to disable its own buttons only */
-  busyAlertId: string | null;
+  alerts: Alert[]
+  onAcknowledge: (id: string) => void
+  onResolve: (id: string) => void
+  busyAlertId: string | null
+  /**
+   * Only passed on the all-sites Alerts page. A device's own page omits
+   * these — the device is already the page's whole context, repeating it
+   * per row would be noise, not information.
+   */
+  deviceById?: Map<string, Device>
+  siteNameById?: Map<string, string>
+  emptyMessage?: string
 }
 
-// Presentational only — no data fetching, no mutation logic — so it's
-// reusable from both the alerts page and a device's own alert history
-// without either owning how the other's mutations are wired.
-export function AlertTable({ alerts, onAcknowledge, onResolve, busyAlertId }: AlertTableProps) {
-  if (alerts.length === 0) {
-    return <p className="empty-state">No alerts.</p>;
-  }
+export function AlertTable({
+  alerts,
+  onAcknowledge,
+  onResolve,
+  busyAlertId,
+  deviceById,
+  siteNameById,
+  emptyMessage = "No alerts.",
+}: AlertTableProps) {
+  const showDeviceColumn = deviceById !== undefined
 
   return (
-    <table className="alert-table">
-      <thead>
-        <tr>
-          <th>Severity</th>
-          <th>Status</th>
-          <th>Value</th>
-          <th>Triggered</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {alerts.map((alert) => {
-          const busy = busyAlertId === alert.id;
-          return (
-            <tr key={alert.id}>
-              <td>
-                <AlertSeverityBadge severity={alert.severity} />
-              </td>
-              <td>{alert.status}</td>
-              <td>{alert.triggered_value}</td>
-              <td>{new Date(alert.triggered_at).toLocaleString()}</td>
-              <td className="alert-table__actions">
-                {alert.status === "open" && (
-                  <button type="button" disabled={busy} onClick={() => onAcknowledge(alert.id)}>
-                    Acknowledge
-                  </button>
-                )}
-                {(alert.status === "open" || alert.status === "acknowledged") && (
-                  <button type="button" disabled={busy} onClick={() => onResolve(alert.id)}>
-                    Resolve
-                  </button>
-                )}
-              </td>
+    <Panel className="overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-faint">
+              <th className="px-4 py-3 font-medium">Severity</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              {showDeviceColumn && <th className="px-4 py-3 font-medium">Device</th>}
+              <th className="px-4 py-3 font-medium">Value</th>
+              <th className="px-4 py-3 font-medium">Triggered</th>
+              <th className="px-4 py-3 font-medium text-right">Actions</th>
             </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
+          </thead>
+          <tbody>
+            {alerts.length === 0 && <EmptyRow colSpan={showDeviceColumn ? 6 : 5}>{emptyMessage}</EmptyRow>}
+            {alerts.map((alert) => {
+              const device = deviceById?.get(alert.device_id)
+              const siteName = device ? siteNameById?.get(device.site_id) : undefined
+              return (
+                <tr key={alert.id} data-testid="alert-row" className="border-b border-border/60 last:border-0 hover:bg-surface-2/60">
+                  <td className="px-4 py-3">
+                    <SeverityBadge severity={alert.severity} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <AlertStatusPill status={alert.status} />
+                  </td>
+                  {showDeviceColumn && (
+                    <td className="px-4 py-3">
+                      {device ? (
+                        <Link to={`/devices/${device.id}`} className="font-medium text-primary hover:underline">
+                          {device.name}
+                        </Link>
+                      ) : (
+                        <span className="text-faint">unknown</span>
+                      )}
+                      {siteName && <span className="ml-2 text-xs text-faint">{siteName}</span>}
+                    </td>
+                  )}
+                  <td className="px-4 py-3 font-mono text-xs text-foreground">{alert.triggered_value}</td>
+                  <td className="px-4 py-3 text-muted">
+                    <span className="text-foreground">{formatRelative(alert.triggered_at)}</span>
+                    <span className="ml-2 text-xs text-faint">{formatTimestamp(alert.triggered_at)}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end">
+                      <AlertActions alert={alert} onAcknowledge={onAcknowledge} onResolve={onResolve} busy={busyAlertId === alert.id} />
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  )
 }

@@ -6,7 +6,41 @@
 - [TanStack Query](https://tanstack.com/query) for all server data — caching, refetch, loading/error state, instead of hand-rolled `useEffect` + `fetch`
 - `react-router` for real, bookmarkable routes (site overview / site detail / device detail / alerts are distinct pages, not tab state)
 - `recharts` for the telemetry trend chart — charting isn't the skill this project demonstrates, so a proven library over hand-rolled SVG
+- **Tailwind CSS v4** + `lucide-react` for icons — adopted when the UI was redesigned from an AI-generated (v0.dev) mockup; see "Visual redesign" below
 - Function components + hooks throughout, no class components — the idiomatic React style, not a compromise (see the OOP discussion in project history: use a class/object only where there's real state to encapsulate, and React's own convention for that is hooks, not `this`)
+
+## Visual redesign
+
+The original hand-written-CSS version was replaced with a design produced
+in v0.dev and ported in by hand — not pasted in wholesale. v0's export was
+already Vite + TypeScript + react-router, which made the port mostly a
+1:1 file mapping, but two things always get replaced when adopting a
+generated UI, and did here:
+
+- **Mock data and mock state are never kept.** v0's export shipped a
+  `lib/data.ts` (hand-written fake sites/devices/telemetry) and a
+  `lib/alerts-store.tsx` (a `useState`-backed context standing in for
+  acknowledge/resolve). Both were deleted outright — every page was
+  rewired to the real hooks (`useSites`, `useDevices`, `useAlerts`,
+  `useAcknowledgeAlert`/`useResolveAlert`) that already talked to `api`.
+  Field names also differ (the mock used camelCase like `deviceId`; the
+  real API is snake_case, `device_id`) — components consume the real
+  `api/types.ts` shapes directly rather than adding a translation layer
+  that would just be one more thing to keep in sync.
+- **Test selectors don't couple to visual structure.** The pre-redesign
+  E2E tests selected on CSS classes (`.alert-table`, `.badge--warning`) —
+  which the redesign promptly broke, since a new visual system has no
+  reason to keep old class names. Fixed by adding `data-testid` /
+  `data-*` attributes to the components tests actually care about
+  (`indicators.tsx`, `AlertTable.tsx`) and switching selectors to those —
+  a future visual change can happen without touching the test suite
+  again.
+
+One addition beyond a straight port: `lib/utils.ts`'s `metricLabels`
+gives telemetry chart lines human labels and units (e.g. "Temperature
+(°C)" instead of the raw key `temperature_c`), keyed by metric name
+rather than per-device-type — one metric name means the same thing
+regardless of which device type reports it, so it stays a flat lookup.
 
 ## Routes
 
