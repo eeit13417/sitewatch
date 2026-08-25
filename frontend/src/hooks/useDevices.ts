@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
+import type { Device } from "../api/types";
 
 export function useDevices(siteId?: string) {
   return useQuery({
@@ -15,7 +16,7 @@ export function useDevices(siteId?: string) {
 const DEVICE_REFRESH_MS = 15_000;
 
 export function useDevice(id: string) {
-  return useQuery({
+  return useQuery<Device, ApiError>({
     queryKey: ["device", id],
     queryFn: () => api.getDevice(id),
     refetchInterval: DEVICE_REFRESH_MS,
