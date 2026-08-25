@@ -19,7 +19,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache: false
+          cache: true
+          cache-dependency-path: ${{ matrix.service }}/go.sum
 
       - name: gofmt check
         working-directory: ${{ matrix.service }}
@@ -62,7 +63,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache: false
+          cache: true
+          cache-dependency-path: ${{ matrix.service }}/go.sum
 
       # testcontainers-go drives the Docker daemon already available on
       # GitHub-hosted runners directly — no `services:` block needed, it
@@ -118,7 +120,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            api/go.sum
+            ingestion/go.sum
 
       - uses: actions/setup-node@v4
         with:
@@ -138,11 +143,21 @@ jobs:
           timeout 60 bash -c 'until (echo > /dev/tcp/localhost/27017) 2>/dev/null; do sleep 1; done'
           timeout 60 bash -c 'until (echo > /dev/tcp/localhost/1883) 2>/dev/null; do sleep 1; done'
 
+      # Separate from the health-wait below on purpose: a cold module
+      # download (no build cache yet on a fresh runner) can easily take
+      # longer than a health check's timeout budget should be, and a
+      # failure here (compile error, missing dependency) says so directly
+      # instead of surfacing as an opaque "healthz never came up".
+      - name: build ingestion + api
+        run: |
+          (cd ingestion && go build -o /tmp/ingestion-bin .)
+          (cd api && go build -o /tmp/api-bin .)
+
       - name: start ingestion + api
         run: |
-          (cd ingestion && nohup go run . > /tmp/ingestion.log 2>&1 &)
-          (cd api && nohup go run . > /tmp/api.log 2>&1 &)
-          timeout 30 bash -c 'until curl -sf localhost:8080/healthz >/dev/null; do sleep 1; done'
+          nohup /tmp/ingestion-bin > /tmp/ingestion.log 2>&1 &
+          nohup /tmp/api-bin > /tmp/api.log 2>&1 &
+          timeout 60 bash -c 'until curl -sf localhost:8080/healthz >/dev/null; do sleep 1; done'
 
       - name: npm ci
         working-directory: frontend
