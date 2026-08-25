@@ -22,7 +22,7 @@ func (a *App) listDevices(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.pg.Query(r.Context(), query, args...)
 	if err != nil {
-		a.logger.Error("query devices", "error", err)
+		a.log(r).Error("query devices", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list devices")
 		return
 	}
@@ -32,7 +32,7 @@ func (a *App) listDevices(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d Device
 		if err := rows.Scan(&d.ID, &d.SiteID, &d.Name, &d.Type, &d.LastSeenAt); err != nil {
-			a.logger.Error("scan device", "error", err)
+			a.log(r).Error("scan device", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list devices")
 			return
 		}
@@ -85,13 +85,13 @@ func (a *App) getDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 	cursor, err := coll.Find(r.Context(), filter,
 		options.Find().SetSort(bson.D{{Key: "ts", Value: -1}}).SetLimit(limit))
 	if err != nil {
-		a.logger.Error("query telemetry_raw", "error", err)
+		a.log(r).Error("query telemetry_raw", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query telemetry")
 		return
 	}
 	defer func() {
 		if err := cursor.Close(r.Context()); err != nil {
-			a.logger.Warn("close telemetry_raw cursor", "error", err)
+			a.log(r).Warn("close telemetry_raw cursor", "error", err)
 		}
 	}()
 
@@ -99,7 +99,7 @@ func (a *App) getDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 	for cursor.Next(r.Context()) {
 		var p TelemetryPoint
 		if err := cursor.Decode(&p); err != nil {
-			a.logger.Error("decode telemetry_raw", "error", err)
+			a.log(r).Error("decode telemetry_raw", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to query telemetry")
 			return
 		}

@@ -1,0 +1,108 @@
+{
+  "title": "SiteWatch",
+  "uid": "sitewatch-overview",
+  "editable": true,
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-30m", "to": "now" },
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "api — request rate by route",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(sitewatch_api_http_requests_total[1m])) by (path)",
+          "legendFormat": "{{path}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "api — request duration p95 by route",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(sitewatch_api_http_request_duration_seconds_bucket[5m])) by (le, path))",
+          "legendFormat": "{{path}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "ingestion — message throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "rate(sitewatch_ingestion_messages_received_total[1m])",
+          "legendFormat": "received/s"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "rate(sitewatch_ingestion_messages_dropped_total[1m])",
+          "legendFormat": "dropped/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "ingestion — message processing duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(sitewatch_ingestion_message_processing_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "alert engine — decisions by action",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(sitewatch_ingestion_alert_decisions_total[5m])) by (action)",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Postgres pool — acquired / max connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sitewatch_postgres_pool_acquired_conns",
+          "legendFormat": "{{service}} acquired"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sitewatch_postgres_pool_max_conns",
+          "legendFormat": "{{service}} max"
+        }
+      ]
+    }
+  ]
+}

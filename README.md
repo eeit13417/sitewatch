@@ -20,7 +20,7 @@ Observability: Prometheus + Grafana, structured JSON logs with correlation IDs
 
 ## Status
 
-Phase 3 (frontend dashboard) — `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)). See `docs/PROJECT_PLAN.md` for what's next (Phase 4: observability).
+Phase 4 (observability) — `api` and `ingestion` both export Prometheus metrics (`/metrics`: request rate/latency, MQTT throughput, alert-engine decisions, Postgres pool stats via a shared collector) and thread a correlation ID through every log line for a given request/message. Grafana ships pre-provisioned from files with one dashboard covering all of it ([design](docs/observability-design.md)). `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)). See `docs/PROJECT_PLAN.md` for what's next (Phase 5: CI/CD hardening).
 
 ## Prerequisites
 
@@ -85,6 +85,8 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+Prometheus (`http://localhost:9090`) and Grafana (`http://localhost:3000`, anonymous viewer access for local dev) come up as part of `docker compose up -d` above and scrape `api`/`ingestion` once those are running — see [`docs/observability-design.md`](docs/observability-design.md) for what's exported and, if you're on Docker Desktop + WSL2, a note on why `prometheus.yml` targets the WSL2 distro's own IP instead of `host.docker.internal`.
 
 ## Testing
 

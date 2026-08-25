@@ -11,10 +11,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/sitewatch/shared"
 	tcmongodb "github.com/testcontainers/testcontainers-go/modules/mongodb"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"go.mongodb.org/mongo-driver/bson"
@@ -81,7 +86,19 @@ func setupTestApp(t *testing.T) (*App, http.Handler) {
 		mongoDB: "sitewatch",
 		logger:  slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	}
-	return app, routes(app)
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(
+		httpRequestsTotal, httpRequestDuration,
+		shared.NewPostgresPoolCollector(pgPool, "api-test"),
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	// Mirrors main()'s handler chain exactly (withCORS(withCorrelationID(...)))
+	// — a test that skipped these wrappers wouldn't actually be testing what
+	// ships, which is how the two failures below were originally missed.
+	handler := withCORS(withCorrelationID(app.logger, routes(app, registry)))
+	return app, handler
 }
 
 func doJSON(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
@@ -305,5 +322,69 @@ func TestDeleteAlertRule_RestrictedWhenAlertsReferenceIt(t *testing.T) {
 	rec := doJSON(t, handler, http.MethodDelete, "/alert-rules/"+ruleID, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 (ON DELETE RESTRICT), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetricsEndpoint_ReflectsRealRequestActivity(t *testing.T) {
+	_, handler := setupTestApp(t)
+
+	// httpRequestsTotal is the same package-level var main() registers —
+	// process-global, so other tests in this binary may have already
+	// incremented it. Assert on the delta this test's own requests cause,
+	// not an absolute value (that was the original version of this test,
+	// and it was flaky exactly because of this).
+	metric := httpRequestsTotal.WithLabelValues("GET", "/sites", "200")
+	before := testutil.ToFloat64(metric)
+
+	// Drive some real traffic through the real route tree first — this is
+	// what actually proves the collector got registered and instrument()
+	// is wired into routes(), not just that the exposition format parses.
+	for i := 0; i < 3; i++ {
+		rec := doJSON(t, handler, http.MethodGet, "/sites", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /sites: expected 200, got %d", rec.Code)
+		}
+	}
+
+	if delta := testutil.ToFloat64(metric) - before; delta != 3 {
+		t.Fatalf("expected sitewatch_api_http_requests_total{method=GET,path=/sites,status=200} to increase by 3, increased by %v", delta)
+	}
+
+	rec := doJSON(t, handler, http.MethodGet, "/metrics", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /metrics: expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Names only, not values — the values are equally process-global.
+	for _, want := range []string{
+		"sitewatch_api_http_requests_total",
+		"sitewatch_api_http_request_duration_seconds",
+		"sitewatch_postgres_pool_max_conns",
+		"go_goroutines",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected /metrics output to contain %q, got:\n%s", want, body)
+		}
+	}
+}
+
+func TestCORS_ReflectsAllowedOriginsOnly(t *testing.T) {
+	_, handler := setupTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/sites", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:5173")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
+		t.Fatalf("expected the allow-listed 127.0.0.1 origin to be reflected, got %q", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/sites", nil)
+	req.Header.Set("Origin", "http://evil.example.com")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no Access-Control-Allow-Origin for a non-allow-listed origin, got %q", got)
 	}
 }

@@ -7,9 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sitewatch/shared"
 )
 
@@ -39,7 +43,15 @@ func main() {
 	}()
 
 	app := &App{pg: pgPool, mongo: mongoClient, mongoDB: os.Getenv("MONGO_DB"), logger: logger}
-	mux := routes(app)
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(
+		httpRequestsTotal, httpRequestDuration,
+		shared.NewPostgresPoolCollector(pgPool, "api"),
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	mux := routes(app, registry)
 
 	port := os.Getenv("API_PORT")
 	if port == "" {
@@ -48,7 +60,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: withCORS(mux),
+		Handler: withCORS(withCorrelationID(logger, mux)),
 		// Unset, a slow/malicious client can hold a connection open
 		// indefinitely while trickling in headers, tying up a goroutine
 		// per connection (a Slowloris DoS) — flagged by gosec (G112).
@@ -74,37 +86,62 @@ func main() {
 
 // routes is factored out of main so integration tests can build the exact
 // same handler tree against a test App without duplicating registrations.
-func routes(app *App) http.Handler {
+// registry may be nil (tests that don't care about metrics) — /metrics is
+// simply omitted in that case.
+func routes(app *App, registry *prometheus.Registry) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+
+	// register wraps each handler with per-route request metrics
+	// (docs/observability-design.md) so every route gets this without
+	// remembering to call instrument() at every call site below.
+	register := func(pattern string, h http.HandlerFunc) {
+		mux.HandleFunc(pattern, instrument(pattern, h))
+	}
+
+	register("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("GET /sites", app.listSites)
-	mux.HandleFunc("GET /devices", app.listDevices)
-	mux.HandleFunc("GET /devices/{id}", app.getDevice)
-	mux.HandleFunc("GET /devices/{id}/telemetry", app.getDeviceTelemetry)
-	mux.HandleFunc("GET /alerts", app.listAlerts)
-	mux.HandleFunc("POST /alerts/{id}/acknowledge", app.acknowledgeAlert)
-	mux.HandleFunc("POST /alerts/{id}/resolve", app.resolveAlert)
-	mux.HandleFunc("GET /alert-rules", app.listAlertRules)
-	mux.HandleFunc("POST /alert-rules", app.createAlertRule)
-	mux.HandleFunc("PATCH /alert-rules/{id}", app.updateAlertRule)
-	mux.HandleFunc("DELETE /alert-rules/{id}", app.deleteAlertRule)
+	if registry != nil {
+		mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+	}
+	register("GET /sites", app.listSites)
+	register("GET /devices", app.listDevices)
+	register("GET /devices/{id}", app.getDevice)
+	register("GET /devices/{id}/telemetry", app.getDeviceTelemetry)
+	register("GET /alerts", app.listAlerts)
+	register("POST /alerts/{id}/acknowledge", app.acknowledgeAlert)
+	register("POST /alerts/{id}/resolve", app.resolveAlert)
+	register("GET /alert-rules", app.listAlertRules)
+	register("POST /alert-rules", app.createAlertRule)
+	register("PATCH /alert-rules/{id}", app.updateAlertRule)
+	register("DELETE /alert-rules/{id}", app.deleteAlertRule)
 	return mux
 }
 
 // withCORS lets the Phase 3 browser frontend call this API cross-origin.
-// CORS_ALLOWED_ORIGIN defaults to the local Vite dev server port rather
-// than "*" — a wildcard origin is the kind of thing a security linter
-// flags for good reason, and there's no case here where any origin should
-// be allowed to call this API.
+// CORS_ALLOWED_ORIGINS (comma-separated) defaults to localhost AND
+// 127.0.0.1 on the Vite dev port — both are valid ways to reach the same
+// local dev server, but the browser treats them as different origins, and
+// a fixed single-origin default broke "Failed to fetch" the moment
+// someone opened the app via the other one. Reflects the actual request
+// Origin back only if it's in the allow-list — never a bare "*", which a
+// security linter would flag for good reason and which this API has no
+// case for anyway.
 func withCORS(h http.Handler) http.Handler {
-	origin := os.Getenv("CORS_ALLOWED_ORIGIN")
-	if origin == "" {
-		origin = "http://localhost:5173"
+	raw := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if raw == "" {
+		raw = "http://localhost:5173,http://127.0.0.1:5173"
 	}
+	allowed := make(map[string]bool)
+	for _, o := range strings.Split(raw, ",") {
+		allowed[strings.TrimSpace(o)] = true
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
+		if origin := r.Header.Get("Origin"); allowed[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {

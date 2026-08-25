@@ -47,8 +47,41 @@ services:
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
 
+  # api/ingestion are not containerized (Phase 5's job — see
+  # docs/observability-design.md) — prometheus.yml scrapes them via
+  # host.docker.internal, which needs the extra_hosts entry below on
+  # Linux Docker (Docker Desktop on Mac/Windows already resolves it).
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    container_name: sitewatch-prometheus
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.3.0
+    container_name: sitewatch-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   mongo_data:
   mosquitto_data:
   mosquitto_log:
+  prometheus_data:
+  grafana_data:
