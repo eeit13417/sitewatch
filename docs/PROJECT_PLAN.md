@@ -40,9 +40,13 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 - No rate limiting — a single client can call any endpoint as fast as it wants. Reasonable follow-up for Phase 5 (CI/CD & production hardening) alongside the free-tier deploy step.
 - Mosquitto broker allows anonymous connect/publish/subscribe (`infra/mosquitto/mosquitto.conf`) — fine for a broker only reachable on localhost/docker-network in this setup, called out there as dev-only.
 
-**Phase 3 — Frontend dashboard**
-- React + TS: site overview, device list, live trend charts (WebSocket or polling), alert management
-- E2E tests for the core flows (view alert, acknowledge alert) with Playwright
+**Phase 3 — Frontend dashboard** ✅ verified end-to-end against the real running stack (infra + ingestion + api + Vite dev server, Playwright driving a real browser)
+- React + TS + Vite, design in [`docs/frontend-design.md`](frontend-design.md): site overview (`/`), per-site device list (`/sites/:id`), device detail with a polled telemetry chart + recent alert history (`/devices/:id`), and the full alert workflow — list/filter/acknowledge/resolve — on `/alerts`
+- TanStack Query for all server state (polling via `refetchInterval`, not WebSocket — see the design doc for why), `react-router` for real routes, `recharts` for the telemetry chart
+- No auth UI (nothing to authenticate against yet) and no WebSocket push (Phase 4) — both deliberate, matching the backend's own documented scope
+- E2E tests (Playwright, `frontend/e2e/`) run against the real stack via real MQTT-triggered alerts, not a mocked API: alerts list rendering, acknowledge updating status, status-filter behavior, and site→device→detail navigation
+- QA caught and fixed one real bug during this phase: the device-detail alert history had no `limit`, so a device with enough history rendered dozens of unpaginated rows — capped to the 10 most recent, full history stays on `/alerts` (see `CLAUDE.md` rule 5)
+- Also fixed a Phase 1 seed-data bug this phase's design surfaced: the seeded user (needed as a fixed "acting user" id since there's no login) was inserted with `'u1111111-...'` — not a valid UUID (`u` isn't a hex digit), which silently rolled back the entire `init.sql` transaction, including all the table creation. Fixed to `'33333333-...'`, consistent with the sites/devices seed id pattern.
 
 **Phase 4 — Observability**
 - Prometheus metrics: request latency/QPS, MQTT message throughput, DB connection pool stats
