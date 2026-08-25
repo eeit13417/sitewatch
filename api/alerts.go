@@ -56,7 +56,7 @@ func (a *App) listAlerts(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.pg.Query(r.Context(), query, args...)
 	if err != nil {
-		a.logger.Error("query alerts", "error", err)
+		a.log(r).Error("query alerts", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list alerts")
 		return
 	}
@@ -67,7 +67,7 @@ func (a *App) listAlerts(w http.ResponseWriter, r *http.Request) {
 		var al Alert
 		if err := rows.Scan(&al.ID, &al.AlertRuleID, &al.DeviceID, &al.TriggeredValue, &al.Severity,
 			&al.Status, &al.TriggeredAt, &al.AcknowledgedAt, &al.AcknowledgedBy, &al.ResolvedAt, &al.ResolvedBy); err != nil {
-			a.logger.Error("scan alert", "error", err)
+			a.log(r).Error("scan alert", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list alerts")
 			return
 		}
@@ -136,7 +136,7 @@ func (a *App) transitionAlert(w http.ResponseWriter, r *http.Request, spec trans
 		return
 	}
 	if err != nil {
-		a.logger.Error("transition alert", "error", err)
+		a.log(r).Error("transition alert", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update alert")
 		return
 	}

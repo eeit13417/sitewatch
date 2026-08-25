@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/sitewatch/shared"
 )
 
@@ -61,6 +65,26 @@ func main() {
 
 	store := NewStore(pgPool, mongoClient, mongoDB)
 
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(
+		messagesReceived, messagesDropped, processingDuration, alertDecisionsTotal,
+		shared.NewPostgresPoolCollector(pgPool, "ingestion"),
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+
+	metricsPort := os.Getenv("INGESTION_PORT")
+	if metricsPort == "" {
+		metricsPort = "8081"
+	}
+	metricsServer := newMetricsServer(registry, metricsPort)
+	go func() {
+		logger.Info("metrics server starting", "port", metricsPort)
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server stopped", "error", err)
+		}
+	}()
+
 	jobs := make(chan job, queueSize)
 	for i := 0; i < workerCount; i++ {
 		go worker(ctx, logger, store, jobs)
@@ -78,6 +102,7 @@ func main() {
 			select {
 			case jobs <- job{topic: m.Topic(), payload: payload}:
 			default:
+				messagesDropped.Inc()
 				logger.Warn("job queue full, dropping message", "topic", m.Topic())
 			}
 		})
@@ -99,6 +124,11 @@ func main() {
 	<-ctx.Done()
 	logger.Info("shutting down")
 	client.Disconnect(250)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("metrics server shutdown", "error", err)
+	}
 }
 
 func worker(ctx context.Context, logger *slog.Logger, store *Store, jobs <-chan job) {
@@ -107,14 +137,24 @@ func worker(ctx context.Context, logger *slog.Logger, store *Store, jobs <-chan 
 		case <-ctx.Done():
 			return
 		case j := <-jobs:
-			if err := process(ctx, logger, store, j); err != nil {
+			messagesReceived.Inc()
+			start := time.Now()
+			err := process(ctx, logger, store, j)
+			processingDuration.Observe(time.Since(start).Seconds())
+			if err != nil {
 				logger.Warn("failed to process message", "topic", j.topic, "error", err)
 			}
 		}
 	}
 }
 
+// process handles one message end to end. Every log line here goes
+// through msgLogger (base logger + a fresh correlation_id) instead of the
+// bare logger, so grepping one id shows this message's complete story —
+// see docs/observability-design.md.
 func process(ctx context.Context, logger *slog.Logger, store *Store, j job) error {
+	msgLogger := logger.With("correlation_id", shared.NewCorrelationID())
+
 	siteID, deviceID, err := parseTopic(j.topic)
 	if err != nil {
 		return err
@@ -137,7 +177,7 @@ func process(ctx context.Context, logger *slog.Logger, store *Store, j job) erro
 	if err := store.MaybeUpdateLastSeen(ctx, msg.DeviceID, now); err != nil {
 		// Non-fatal: telemetry already landed in Mongo; losing one
 		// last_seen_at update just delays the next debounced write.
-		logger.Warn("update last_seen_at failed", "device_id", msg.DeviceID, "error", err)
+		msgLogger.Warn("update last_seen_at failed", "device_id", msg.DeviceID, "error", err)
 	}
 
 	rules, err := store.LoadEnabledRules(ctx, msg.DeviceID)
@@ -162,8 +202,10 @@ func process(ctx context.Context, logger *slog.Logger, store *Store, j job) erro
 		return err
 	}
 	for _, d := range decisions {
-		logger.Info("alert decision", "device_id", msg.DeviceID, "rule_id", d.Rule.ID,
-			"action", decisionLabel(d.Decision), "value", d.Value)
+		label := decisionLabel(d.Decision)
+		alertDecisionsTotal.WithLabelValues(label).Inc()
+		msgLogger.Info("alert decision", "device_id", msg.DeviceID, "rule_id", d.Rule.ID,
+			"action", label, "value", d.Value)
 	}
 	return nil
 }

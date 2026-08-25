@@ -5,7 +5,7 @@ import "net/http"
 func (a *App) listSites(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.pg.Query(r.Context(), `SELECT id, name, type, COALESCE(location, '') FROM sites ORDER BY name`)
 	if err != nil {
-		a.logger.Error("query sites", "error", err)
+		a.log(r).Error("query sites", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list sites")
 		return
 	}
@@ -15,7 +15,7 @@ func (a *App) listSites(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s Site
 		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.Location); err != nil {
-			a.logger.Error("scan site", "error", err)
+			a.log(r).Error("scan site", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list sites")
 			return
 		}

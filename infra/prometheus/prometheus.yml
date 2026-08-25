@@ -1,0 +1,29 @@
+# api/ingestion aren't containerized (see docs/observability-design.md —
+# that's deliberately Phase 5's job), so Prometheus (running in Docker)
+# reaches them on the host instead of via a docker-compose service name.
+#
+# On this dev machine (Docker Desktop + WSL2), host.docker.internal
+# resolves to the Docker Desktop VM's own gateway (192.168.65.254), which
+# cannot reach ports bound inside the WSL2 distro — Docker Desktop's VM
+# and the WSL2 distro are separate network namespaces, and neither
+# host.docker.internal nor --network host bridges them for a
+# non-containerized WSL2 process. The WSL2 distro's own eth0 address
+# (`ip addr show eth0`, or `hostname -I`) IS reachable from the Docker
+# Desktop VM, so that's what's used below. This is a WSL2-specific
+# workaround for local verification only: it changes if the WSL2 distro
+# restarts, and Phase 5 containerizing api/ingestion removes the need for
+# it entirely (they'd be reached by docker-compose service name instead).
+# On native Linux Docker or Docker Desktop for Mac, host.docker.internal
+# (with the extra_hosts entry in docker-compose.yml for Linux) works fine
+# and should be used instead.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: sitewatch-api
+    static_configs:
+      - targets: ["172.31.248.9:8080"]
+
+  - job_name: sitewatch-ingestion
+    static_configs:
+      - targets: ["172.31.248.9:8081"]

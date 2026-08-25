@@ -28,7 +28,7 @@ func (a *App) listAlertRules(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.pg.Query(r.Context(), query, args...)
 	if err != nil {
-		a.logger.Error("query alert_rules", "error", err)
+		a.log(r).Error("query alert_rules", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list alert rules")
 		return
 	}
@@ -38,7 +38,7 @@ func (a *App) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var ar AlertRule
 		if err := rows.Scan(&ar.ID, &ar.DeviceID, &ar.Metric, &ar.Operator, &ar.Threshold, &ar.Severity, &ar.Enabled); err != nil {
-			a.logger.Error("scan alert_rule", "error", err)
+			a.log(r).Error("scan alert_rule", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list alert rules")
 			return
 		}
@@ -70,7 +70,7 @@ func (a *App) createAlertRule(w http.ResponseWriter, r *http.Request) {
 		in.DeviceID, in.Metric, in.Operator, in.Threshold, in.Severity, enabled,
 	).Scan(&ar.ID, &ar.DeviceID, &ar.Metric, &ar.Operator, &ar.Threshold, &ar.Severity, &ar.Enabled)
 	if err != nil {
-		a.logger.Error("insert alert_rule", "error", err)
+		a.log(r).Error("insert alert_rule", "error", err)
 		writeError(w, http.StatusBadRequest, "failed to create alert rule (check device_id, operator, severity)")
 		return
 	}
@@ -103,7 +103,7 @@ func (a *App) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		a.logger.Error("update alert_rule", "error", err)
+		a.log(r).Error("update alert_rule", "error", err)
 		writeError(w, http.StatusBadRequest, "failed to update alert rule")
 		return
 	}
@@ -120,7 +120,7 @@ func (a *App) deleteAlertRule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "alert rule still has alerts referencing it")
 			return
 		}
-		a.logger.Error("delete alert_rule", "error", err)
+		a.log(r).Error("delete alert_rule", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete alert rule")
 		return
 	}
