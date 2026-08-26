@@ -20,7 +20,7 @@ Observability: Prometheus + Grafana, structured JSON logs with correlation IDs
 
 ## Status
 
-Phase 4 (observability) — `api` and `ingestion` both export Prometheus metrics (`/metrics`: request rate/latency, MQTT throughput, alert-engine decisions, Postgres pool stats via a shared collector) and thread a correlation ID through every log line for a given request/message. Grafana ships pre-provisioned from files with one dashboard covering all of it ([design](docs/observability-design.md)). `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)). See `docs/PROJECT_PLAN.md` for what's next (Phase 5: CI/CD hardening).
+Phase 5 (Docker images & CI hardening) — `api` and `ingestion` now run as real `docker-compose` services (multi-stage Dockerfiles, distroless runtime images — [design](docs/deployment-hardening-design.md)), CI publishes both images to GitHub Container Registry on every `main` commit, and `api` has a per-IP rate limiter closing a gap left open since Phase 2. They both export Prometheus metrics (`/metrics`: request rate/latency, MQTT throughput, alert-engine decisions, Postgres pool stats via a shared collector) and thread a correlation ID through every log line for a given request/message. Grafana ships pre-provisioned from files with one dashboard covering all of it ([design](docs/observability-design.md)). `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)). See `docs/PROJECT_PLAN.md` for what's next (Phase 6: production-incident drills + documentation).
 
 ## Prerequisites
 
@@ -30,10 +30,15 @@ Phase 4 (observability) — `api` and `ingestion` both export Prometheus metrics
 
 ## Quick start
 
+`api` and `ingestion` run as real `docker-compose` services as of Phase 5
+([design](docs/deployment-hardening-design.md)) — this one command brings
+up the whole backend: Postgres, MongoDB, Mosquitto, `api`, `ingestion`,
+Prometheus, and Grafana.
+
 ```bash
 cp .env.example .env   # edit if needed
 cd infra
-docker compose --env-file ../.env up -d
+docker compose --env-file ../.env up -d --build
 docker compose ps
 ```
 
@@ -58,18 +63,9 @@ Watch the raw MQTT traffic in another terminal:
 docker exec sitewatch-mqtt mosquitto_sub -t 'sitewatch/#' -v
 ```
 
-Run `ingestion` (consumes that same MQTT traffic, writes to Mongo/Postgres, evaluates alerts):
+Exercise the API (already running as part of the compose stack above):
 
 ```bash
-cd ingestion
-go run .
-```
-
-Run `api` in another terminal, then exercise it:
-
-```bash
-cd api
-go run .
 curl localhost:8080/sites
 curl localhost:8080/devices
 curl "localhost:8080/alerts?status=open"
@@ -86,7 +82,23 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-Prometheus (`http://localhost:9090`) and Grafana (`http://localhost:3000`, anonymous viewer access for local dev) come up as part of `docker compose up -d` above and scrape `api`/`ingestion` once those are running — see [`docs/observability-design.md`](docs/observability-design.md) for what's exported and, if you're on Docker Desktop + WSL2, a note on why `prometheus.yml` targets the WSL2 distro's own IP instead of `host.docker.internal`.
+Prometheus (`http://localhost:9090`) and Grafana (`http://localhost:3000`,
+anonymous viewer access for local dev) come up as part of `docker compose
+up` above and scrape `api`/`ingestion` by their compose service name — see
+[`docs/observability-design.md`](docs/observability-design.md) for what's
+exported.
+
+### Iterating on `api`/`ingestion` outside Docker
+
+For a faster edit/run loop than rebuilding an image each time, stop the
+compose-managed instance and run the binary directly against the same
+infra — `POSTGRES_URL`/`MONGO_URL`/`MQTT_BROKER_URL` in `.env` already
+point at `localhost`, which is what a bare `go run` needs:
+
+```bash
+cd infra && docker compose stop api      # or: docker compose stop ingestion
+cd ../api && go run .                    # or: cd ../ingestion && go run .
+```
 
 ## Testing
 
