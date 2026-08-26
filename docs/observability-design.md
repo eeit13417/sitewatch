@@ -110,14 +110,19 @@ consistently:
 `infra/docker-compose.yml` gains two services:
 
 - **`prometheus`** — scrapes `api:8080/metrics` and `ingestion:8081/metrics`
-  every 5s via whatever host address reaches the non-containerized `api`/
-  `ingestion` processes (see the note in `infra/prometheus/prometheus.yml`
-  itself — on Docker Desktop + WSL2 that's the WSL2 distro's own IP, not
-  `host.docker.internal`, which resolves to the Docker Desktop VM's own
-  gateway and can't reach into the WSL2 network namespace; on native Linux
-  Docker or Docker Desktop for Mac, `host.docker.internal` works as
-  expected). Config lives at `infra/prometheus/prometheus.yml`, checked in
+  every 5s. Config lives at `infra/prometheus/prometheus.yml`, checked in
   — not clicked together.
+
+  At the time this phase landed, `api`/`ingestion` weren't containerized
+  yet (that was explicitly Phase 5's job — see below), so this had to
+  reach them as bare host processes instead of compose services, which on
+  Docker Desktop + WSL2 meant `host.docker.internal` didn't work
+  (resolves to the Docker Desktop VM's own gateway, which can't reach into
+  the WSL2 network namespace) and the config pointed at the WSL2 distro's
+  own IP as a documented, temporary workaround. Phase 5
+  (`docs/deployment-hardening-design.md`) containerized both services, so
+  Prometheus now reaches them by service name like everything else and
+  that workaround is gone.
 - **`grafana`** — datasource and dashboard are **provisioned from files**
   (`infra/grafana/provisioning/`), not manually configured through the UI
   and lost on container recreation. One dashboard,

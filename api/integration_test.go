@@ -97,7 +97,8 @@ func setupTestApp(t *testing.T) (*App, http.Handler) {
 	// Mirrors main()'s handler chain exactly (withCORS(withCorrelationID(...)))
 	// — a test that skipped these wrappers wouldn't actually be testing what
 	// ships, which is how the two failures below were originally missed.
-	handler := withCORS(withCorrelationID(app.logger, routes(app, registry)))
+	limiter := rateLimitFromEnv()
+	handler := withCORS(withCorrelationID(app.logger, withRateLimit(limiter, app.logger, routes(app, registry))))
 	return app, handler
 }
 
@@ -386,5 +387,39 @@ func TestCORS_ReflectsAllowedOriginsOnly(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("expected no Access-Control-Allow-Origin for a non-allow-listed origin, got %q", got)
+	}
+}
+
+// Uses its own tiny-burst limiter rather than setupTestApp's (which mirrors
+// production's real defaults — far too many requests for a quick test) so
+// this only exercises the real chain's 429/Retry-After behavior, not the
+// token-bucket math itself (already covered by ratelimit_test.go).
+func TestRateLimit_RejectsRequestsPastBurstThroughRealChain(t *testing.T) {
+	app, _ := setupTestApp(t)
+
+	limiter := newIPRateLimiter(1, 2)
+	handler := withCORS(withCorrelationID(app.logger, withRateLimit(limiter, app.logger, routes(app, nil))))
+
+	for i := 0; i < 2; i++ {
+		rec := doJSON(t, handler, http.MethodGet, "/healthz", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d within burst: expected 200, got %d", i, rec.Code)
+		}
+	}
+
+	rec := doJSON(t, handler, http.MethodGet, "/healthz", nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("request past burst: expected 429, got %d", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("expected a Retry-After header on the 429 response")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.RemoteAddr = "203.0.113.9:5555"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("a different client IP should have its own untouched budget, got %d", rec2.Code)
 	}
 }

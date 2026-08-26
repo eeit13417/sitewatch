@@ -1,0 +1,8 @@
+.git
+frontend
+simulator
+infra
+docs
+scripts
+**/*_test.go
+**/node_modules

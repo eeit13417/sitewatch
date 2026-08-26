@@ -13,7 +13,7 @@ Practice project for the Delta Electronics (Thailand) Software & Digital Enablem
 | RESTful API | `api` service, documented with OpenAPI |
 | Monitoring/logging/observability | Prometheus + Grafana, structured JSON logs with correlation IDs (Phase 4) |
 | Troubleshooting / RCA | Deliberately injected production issues + written RCAs (Phase 6) |
-| Git / Docker / CI-CD | Branch strategy, docker-compose, GitHub Actions |
+| Git / Docker / CI-CD | Branch strategy, docker-compose, multi-stage Dockerfiles, GitHub Actions build+push to GHCR (Phase 5) |
 | Event-driven / MQTT | Mosquitto broker, ingestion service subscribes and processes telemetry |
 | Automated testing | Unit (Go testing/Jest), integration (testcontainers), E2E (Playwright) |
 
@@ -37,7 +37,7 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 
 **Known deferred security gaps (Phase 2)** — written down deliberately, not silently skipped:
 - No authentication on the API — every endpoint is open. Out of scope because the JD doesn't call out auth as a target skill and this project's depth is meant to be elsewhere; would need to land before this was ever exposed beyond localhost.
-- No rate limiting — a single client can call any endpoint as fast as it wants. Reasonable follow-up for Phase 5 (CI/CD & production hardening) alongside the free-tier deploy step.
+- ~~No rate limiting~~ — closed in Phase 5, see below.
 - Mosquitto broker allows anonymous connect/publish/subscribe (`infra/mosquitto/mosquitto.conf`) — fine for a broker only reachable on localhost/docker-network in this setup, called out there as dev-only.
 
 **Phase 3 — Frontend dashboard** ✅ verified end-to-end against the real running stack (infra + ingestion + api + Vite dev server, Playwright driving a real browser)
@@ -58,9 +58,13 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 - **Non-goals, deliberately deferred**: distributed tracing, containerizing `api`/`ingestion` (Phase 5), Alertmanager/paging, log aggregation — all noted in the design doc
 - Testing note worth keeping: Prometheus `client_golang` metrics declared as package-level vars are process-global, so asserting an *absolute* counter value in a test is flaky once other tests in the same binary touch the same route — assert the *delta* around the action instead (`testutil.ToFloat64` before/after). Confirmed the fix holds under `-shuffle=on`.
 
-**Phase 5 — CI/CD hardening**
-- GitHub Actions: lint → test → build image → push image → (optional) deploy to a free-tier host
-- Branch protection, PR template
+**Phase 5 — Docker images & CI hardening** ✅ verified end-to-end (full `docker compose up --build`, live burst test against the running `api` container, image build confirmed locally with the same Dockerfiles CI uses)
+- Design in [`docs/deployment-hardening-design.md`](deployment-hardening-design.md). `api`/`ingestion` get multi-stage Dockerfiles (`golang:1.25` builder → `gcr.io/distroless/static-debian12:nonroot` runtime — no shell, non-root by default) and become real `infra/docker-compose.yml` services, reachable by each other and by Prometheus via compose service name
+- This retires the Phase 4 WSL2 workaround in `infra/prometheus/prometheus.yml` entirely — confirmed live: both scrape targets `UP` via `api:8080`/`ingestion:8081`, and the MQTT reconnect churn `ingestion` was logging as a bare host process (WSL2 networking quirk) is gone too now that it's on the same compose network as `mosquitto`
+- CI gains a `docker-build-push` job: on push to `main` only, after `lint-and-build`/`integration-test` pass, builds and pushes both images to GitHub Container Registry, tagged with the commit SHA and `latest` — publishing an image, not deploying it anywhere (see below)
+- `.github/PULL_REQUEST_TEMPLATE.md` added; branch protection on `main` (require CI to pass before merge)
+- Closed the Phase 2 rate-limiting gap: per-IP token bucket (`golang.org/x/time/rate`), in-memory, `RATE_LIMIT_RPS`/`RATE_LIMIT_BURST` env-configurable, idle visitors swept by a background cleanup loop so the tracking map can't grow unbounded. Verified against the real running container with an actual burst of requests (`api/ratelimit.go`, `docs/deployment-hardening-design.md` for the per-IP/in-memory/`RemoteAddr` reasoning)
+- **CD (automatic deployment to a live environment) — deliberately deferred, not abandoned.** Publishing an image to a registry is delivery, not deployment; an actual live target needs external hosting (no current free-tier PaaS runs this project's full multi-service stack — Postgres + MongoDB + an MQTT broker + two Go services — for free in one place), which is real scope of its own. Revisit once the rest of the phased plan is further along; `docker compose up` locally plus a Phase 6 screen recording is the plan for showing it working in the meantime.
 
 **Phase 6 — Production-incident drills + documentation**
 Deliberately inject and then investigate:

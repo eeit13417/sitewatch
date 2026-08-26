@@ -52,6 +52,10 @@ func main() {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	mux := routes(app, registry)
+	limiter := rateLimitFromEnv()
+	cleanupDone := make(chan struct{})
+	go limiter.cleanupLoop(cleanupDone, time.Minute, 10*time.Minute)
+	defer close(cleanupDone)
 
 	port := os.Getenv("API_PORT")
 	if port == "" {
@@ -60,7 +64,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: withCORS(withCorrelationID(logger, mux)),
+		Handler: withCORS(withCorrelationID(logger, withRateLimit(limiter, logger, mux))),
 		// Unset, a slow/malicious client can hold a connection open
 		// indefinitely while trickling in headers, tying up a goroutine
 		// per connection (a Slowloris DoS) — flagged by gosec (G112).

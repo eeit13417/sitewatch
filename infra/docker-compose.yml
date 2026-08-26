@@ -47,21 +47,60 @@ services:
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
 
-  # api/ingestion are not containerized (Phase 5's job — see
-  # docs/observability-design.md) — prometheus.yml scrapes them via
-  # host.docker.internal, which needs the extra_hosts entry below on
-  # Linux Docker (Docker Desktop on Mac/Windows already resolves it).
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    container_name: sitewatch-api
+    restart: unless-stopped
+    environment:
+      POSTGRES_URL: postgres://${POSTGRES_USER:-sitewatch}:${POSTGRES_PASSWORD:-sitewatch}@postgres:5432/${POSTGRES_DB:-sitewatch}
+      MONGO_URL: mongodb://${MONGO_USER:-sitewatch}:${MONGO_PASSWORD:-sitewatch}@mongodb:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-sitewatch}
+      API_PORT: "8080"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+  ingestion:
+    build:
+      context: ..
+      dockerfile: ingestion/Dockerfile
+    container_name: sitewatch-ingestion
+    restart: unless-stopped
+    environment:
+      POSTGRES_URL: postgres://${POSTGRES_USER:-sitewatch}:${POSTGRES_PASSWORD:-sitewatch}@postgres:5432/${POSTGRES_DB:-sitewatch}
+      MONGO_URL: mongodb://${MONGO_USER:-sitewatch}:${MONGO_PASSWORD:-sitewatch}@mongodb:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-sitewatch}
+      MQTT_BROKER_URL: tcp://mosquitto:1883
+      INGESTION_PORT: "8081"
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
   prometheus:
     image: prom/prometheus:v3.7.3
     container_name: sitewatch-prometheus
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    depends_on:
+      - api
+      - ingestion
 
   grafana:
     image: grafana/grafana:12.3.0
