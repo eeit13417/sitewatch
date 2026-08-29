@@ -77,6 +77,10 @@ CREATE TABLE alerts (
 );
 CREATE INDEX idx_alerts_device_id ON alerts (device_id);
 CREATE INDEX idx_alerts_status ON alerts (status);
+-- The unfiltered GET /alerts path (api/alerts.go) always does
+-- ORDER BY triggered_at DESC — without this, that's a full seq scan +
+-- sort once the table has real volume. See docs/rca/01-missing-index.md.
+CREATE INDEX idx_alerts_triggered_at ON alerts (triggered_at DESC);
 
 -- Seed data -----------------------------------------------------------------
 -- Fixed ids so the device simulator, and anyone re-running this file, can

@@ -152,12 +152,17 @@ func TestAlertLifecycle_CreateThenAutoResolve(t *testing.T) {
 		t.Fatalf("expected 2 seeded rules for temp-sensor-01, got %d", len(rules))
 	}
 
-	// A spike above both thresholds: both should create alerts.
+	// A spike above both thresholds: both should create alerts. debounceN=1
+	// reproduces the pre-debounce behavior (act on the first reading); one
+	// shared streaks map across all three EvaluateRules calls below mirrors
+	// how BreachTracker persists state across messages in production.
+	const debounceN = 1
+	streaks := map[string]BreachState{}
 	active, err := store.LoadActiveRuleIDs(ctx, deviceID)
 	if err != nil {
 		t.Fatalf("LoadActiveRuleIDs: %v", err)
 	}
-	decisions := EvaluateRules(rules, map[string]float64{"temperature_c": 33}, active)
+	decisions := EvaluateRules(rules, map[string]float64{"temperature_c": 33}, active, streaks, debounceN)
 	if len(decisions) != 2 {
 		t.Fatalf("expected 2 CreateAlert decisions, got %d", len(decisions))
 	}
@@ -178,14 +183,14 @@ func TestAlertLifecycle_CreateThenAutoResolve(t *testing.T) {
 
 	// Re-evaluating the same spike must not create duplicates (dedup).
 	active, _ = store.LoadActiveRuleIDs(ctx, deviceID)
-	decisions = EvaluateRules(rules, map[string]float64{"temperature_c": 33}, active)
+	decisions = EvaluateRules(rules, map[string]float64{"temperature_c": 33}, active, streaks, debounceN)
 	if len(decisions) != 0 {
 		t.Fatalf("expected no new decisions while already active, got %d", len(decisions))
 	}
 
 	// Reading back to normal: both should auto-resolve.
 	active, _ = store.LoadActiveRuleIDs(ctx, deviceID)
-	decisions = EvaluateRules(rules, map[string]float64{"temperature_c": 24}, active)
+	decisions = EvaluateRules(rules, map[string]float64{"temperature_c": 24}, active, streaks, debounceN)
 	if len(decisions) != 2 {
 		t.Fatalf("expected 2 AutoResolve decisions, got %d", len(decisions))
 	}
@@ -201,5 +206,38 @@ func TestAlertLifecycle_CreateThenAutoResolve(t *testing.T) {
 	}
 	if resolvedCount != 2 {
 		t.Fatalf("expected 2 resolved alerts, found %d", resolvedCount)
+	}
+}
+
+// TestApplyDecisionsWithRetry_GivesUpAfterMaxAttempts is incident 4
+// (docs/rca/04-mongo-postgres-inconsistency.md): an already-cancelled
+// context makes every attempt fail deterministically (pgx checks context
+// state before/while running a query), the same shape of failure a real
+// transient connection blip would produce, so this exercises the actual
+// retry/backoff loop against a real pgxpool.Pool, not a mock.
+func TestApplyDecisionsWithRetry_GivesUpAfterMaxAttempts(t *testing.T) {
+	store := setupTestStore(t)
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	decisions := []RuleDecision{{
+		Rule:     Rule{ID: "11111111-1111-1111-1111-111111111111", Severity: "warning"},
+		Decision: CreateAlert,
+		Value:    99,
+	}}
+
+	start := time.Now()
+	err := applyDecisionsWithRetry(cancelledCtx, store, "a1111111-0000-0000-0000-000000000002", decisions, time.Now().UTC())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error once every retry attempt fails, got nil")
+	}
+	// 3 attempts, backoff 100ms then 200ms between them — each attempt
+	// fails instantly on the cancelled context, so elapsed is essentially
+	// just the two sleeps.
+	if elapsed < 250*time.Millisecond {
+		t.Fatalf("expected the retry loop to have waited through its backoff (>=250ms), took %v", elapsed)
 	}
 }
