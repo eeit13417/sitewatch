@@ -43,9 +43,24 @@ func NewPostgresPool(ctx context.Context) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// NewMongoClient connects using MONGO_URL.
+// defaultMongoMaxPoolSize caps the MongoDB driver's connection pool per
+// service instance, same reasoning as defaultMaxConns above — left unset,
+// the driver defaults to 100, an unbounded-in-practice number nobody
+// actually chose. See docs/rca/02-mqtt-leak-and-pool.md.
+const defaultMongoMaxPoolSize = 20
+
+// NewMongoClient connects using MONGO_URL, pool size capped by
+// MONGO_MAX_POOL_SIZE (falls back to defaultMongoMaxPoolSize).
 func NewMongoClient(ctx context.Context) (*mongo.Client, error) {
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(os.Getenv("MONGO_URL")))
+	poolSize := uint64(defaultMongoMaxPoolSize)
+	if raw := os.Getenv("MONGO_MAX_POOL_SIZE"); raw != "" {
+		if n, err := strconv.ParseUint(raw, 10, 32); err == nil && n > 0 {
+			poolSize = n
+		}
+	}
+
+	opts := options.Client().ApplyURI(os.Getenv("MONGO_URL")).SetMaxPoolSize(poolSize)
+	client, err := mongo.Connect(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("connect mongo: %w", err)
 	}

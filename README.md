@@ -4,7 +4,7 @@ A practice project simulating a smart energy / data center / building automation
 
 Full phased plan: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md)
 
-## Architecture (target state)
+## Architecture
 
 ```
 [simulated devices] --MQTT--> [ingestion service (Go)] --> MongoDB (raw telemetry)
@@ -18,9 +18,13 @@ Full phased plan: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md)
 Observability: Prometheus + Grafana, structured JSON logs with correlation IDs
 ```
 
+Full system diagram, database rationale, and deployment shape: [docs/architecture.md](docs/architecture.md). Troubleshooting a live problem: [docs/runbook.md](docs/runbook.md).
+
 ## Status
 
-Phase 5 (Docker images & CI hardening) — `api` and `ingestion` now run as real `docker-compose` services (multi-stage Dockerfiles, distroless runtime images — [design](docs/deployment-hardening-design.md)), CI publishes both images to GitHub Container Registry on every `main` commit, and `api` has a per-IP rate limiter closing a gap left open since Phase 2. They both export Prometheus metrics (`/metrics`: request rate/latency, MQTT throughput, alert-engine decisions, Postgres pool stats via a shared collector) and thread a correlation ID through every log line for a given request/message. Grafana ships pre-provisioned from files with one dashboard covering all of it ([design](docs/observability-design.md)). `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)). See `docs/PROJECT_PLAN.md` for what's next (Phase 6: production-incident drills + documentation).
+All 6 phases complete — see [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) for the full breakdown. Most recently, Phase 6 (production-incident drills): 5 incidents deliberately reproduced against the real running stack and fixed — a missing index (real `EXPLAIN ANALYZE` before/after), a leaked goroutine on MQTT reconnect (diagnosed with `pprof`), a consumer-vs-publisher backlog (visible on the Grafana throughput panel), a MongoDB/PostgreSQL inconsistency window (Postgres stopped mid-flow, then a bounded retry added), and an alert storm from a threshold sitting in sensor noise (fixed with consecutive-breach debounce). Full writeups in [`docs/rca/`](docs/rca/).
+
+`api` and `ingestion` run as real `docker-compose` services (multi-stage Dockerfiles, distroless runtime images — [design](docs/deployment-hardening-design.md)), CI publishes both images to GitHub Container Registry on every `main` commit, and `api` has a per-IP rate limiter. They both export Prometheus metrics (`/metrics`: request rate/latency, MQTT throughput, alert-engine decisions, Postgres pool stats via a shared collector) and thread a correlation ID through every log line for a given request/message. Grafana ships pre-provisioned from files with one dashboard covering all of it ([design](docs/observability-design.md)). `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)).
 
 ## Prerequisites
 
@@ -118,8 +122,8 @@ PGPASSWORD=sitewatch ./scripts/verify-db.sh
 `ingestion`/`api` unit tests (pure logic, no Docker):
 
 ```bash
-cd ingestion && go test ./...   # alert engine rule evaluation
-cd api && go test ./...         # no pure-logic tests yet — see integration tests below
+cd ingestion && go test ./...   # alert engine rule evaluation + debounce
+cd api && go test ./...         # rate limiter token bucket
 ```
 
 `ingestion`/`api` integration tests — real Postgres (seeded from the actual `infra/postgres/init.sql`) and MongoDB via `testcontainers-go`, no docker-compose needed, just a running Docker daemon:
@@ -128,6 +132,28 @@ cd api && go test ./...         # no pure-logic tests yet — see integration te
 cd ingestion && go test -tags=integration ./... -v
 cd api && go test -tags=integration ./... -v
 ```
+
+Coverage numbers and how to read them: [docs/test-coverage.md](docs/test-coverage.md).
+
+## Incident drills (Phase 6)
+
+`docs/rca/` has 5 write-ups of production incidents deliberately
+reproduced against the real running stack (not simulated in the
+abstract) — a missing index, a leaked goroutine, an MQTT backlog, a
+MongoDB/PostgreSQL inconsistency window, and an alert storm — each with
+the actual before/after evidence captured while fixing it.
+[docs/runbook.md](docs/runbook.md) is the quick-reference version: pick a
+symptom, get a "what to check" pointer back into the relevant RCA.
+
+Two tools those drills used that are also just generally useful:
+
+- `ingestion` exposes `/debug/pprof/*` on its metrics port (`8081` by
+  default) — `go tool pprof http://localhost:8081/debug/pprof/heap` (or
+  `.../goroutine`) for live profiling.
+- `scripts/demo-seed-bulk-alerts.sql` generates 300k synthetic `alerts`
+  rows (marked `triggered_value = -1`, safe to delete afterward) for
+  reproducing volume-dependent query-plan issues locally — not part of
+  `init.sql`'s seed data, run it manually against a running Postgres.
 
 Frontend E2E (Playwright, against the real running stack — infra + `ingestion` + `api` + the Vite dev server all need to already be up, see Quick start above):
 

@@ -21,19 +21,44 @@ per `docs/mqtt-contract.md`):
 
 For each rule whose `metric` appears in `readings`:
 
-| Condition met? | Active alert exists? | Action |
-|---|---|---|
-| yes | no | create a new alert (`status = 'open'`) |
-| yes | yes | nothing — already tracked, don't duplicate |
-| no | yes | auto-resolve the active alert (`status = 'resolved'`, `resolved_at = now()`, `resolved_by` stays `NULL` to distinguish "cleared itself" from "a person resolved it") |
-| no | no | nothing |
+| Condition met? | Active alert exists? | Debounce streak reached `ALERT_DEBOUNCE_BREACHES`? | Action |
+|---|---|---|---|
+| yes | no | yes | create a new alert (`status = 'open'`) |
+| yes | no | not yet | nothing — still accumulating consecutive breaches |
+| yes | yes | n/a | nothing — already tracked, don't duplicate |
+| no | yes | yes | auto-resolve the active alert (`status = 'resolved'`, `resolved_at = now()`, `resolved_by` stays `NULL` to distinguish "cleared itself" from "a person resolved it") |
+| no | yes | not yet | nothing — still accumulating consecutive non-breaches |
+| no | no | n/a | nothing |
 
-This intentionally does **not** implement debounce/hysteresis (e.g. "only
-trigger after 3 consecutive breaches") or alert-storm suppression — a
-threshold that flaps around its boundary will flap the alert with it. That
-gap is deliberate: Phase 6 uses exactly this as one of the drilled
-incidents (an alert storm from a badly-tuned rule), so the naive version
-needs to still be here to break.
+## Debounce (added Phase 6 — see `docs/rca/05-alert-storm.md`)
+
+The engine originally acted on every single reading: the moment a value
+crossed a threshold it created an alert, and the moment it dipped back it
+auto-resolved. A value oscillating right at a rule's boundary — which
+happens routinely with real sensor noise, not just misconfiguration —
+flapped the alert create/resolve/create/resolve on every message. That gap
+was deliberate at the time: Phase 6 used exactly this as one of the
+drilled incidents (an alert storm from a badly-tuned threshold), so the
+naive version needed to still be here to break before it got fixed.
+
+The fix: `EvaluateRules` now takes a `streaks map[string]BreachState`
+(keyed by `alert_rule_id`) tracking how many consecutive readings in a row
+have gone the same direction, and a `debounceN` — a rule only fires
+`CreateAlert` after `debounceN` consecutive breaching readings, and only
+fires `AutoResolve` after `debounceN` consecutive non-breaching ones. Any
+reading that breaks the current streak's direction resets the counter to
+1, so a value bouncing back and forth across the boundary never
+accumulates enough consecutive readings in either direction to act at all
+— which is exactly the flapping case this needed to stop.
+
+`debounceN` is `ALERT_DEBOUNCE_BREACHES` (default 3, tunable per CLAUDE.md
+rule 2). The streak state itself (`ingestion/alerts.go`'s
+`BreachTracker`) lives in ingestion's process memory, not Postgres — it
+resets on restart, which only ever delays a decision by up to
+`debounceN - 1` readings (the safe direction: never causes a missed
+necessary alert, never causes a spurious one either). Keyed purely by
+`alert_rule_id` since a rule belongs to exactly one device, so no need to
+also key by `device_id`.
 
 ## Why "active" includes `acknowledged`, not just `open`
 

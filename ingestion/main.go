@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -17,15 +18,37 @@ import (
 	"github.com/sitewatch/shared"
 )
 
-// workerCount bounds how many messages are processed concurrently — enough
-// to not serialize on DB round-trips, small enough not to open unbounded
-// connections under a burst. queueSize is the backpressure buffer: once
-// full, new messages are dropped rather than blocking the MQTT client
-// indefinitely (see the "drop, don't block" note in the process log).
+// defaultWorkerCount bounds how many messages are processed concurrently —
+// enough to not serialize on DB round-trips, small enough not to open
+// unbounded connections under a burst. defaultQueueSize is the backpressure
+// buffer: once full, new messages are dropped rather than blocking the MQTT
+// client indefinitely (see the "drop, don't block" note in the process
+// log). Both are overridable via INGESTION_WORKER_COUNT/INGESTION_QUEUE_SIZE
+// — CLAUDE.md rule 2 flags worker counts as exactly the kind of value that
+// needs tuning per environment rather than being buried as a constant; see
+// docs/rca/03-mqtt-backlog.md for why this needed to actually be tunable
+// (reproducing a backlog drill meant deliberately running with 1 worker).
+// defaultDebounceBreaches is how many consecutive same-direction readings
+// EvaluateRules requires before creating or auto-resolving an alert — see
+// docs/alert-engine.md and docs/rca/05-alert-storm.md. Overridable via
+// ALERT_DEBOUNCE_BREACHES.
 const (
-	workerCount = 4
-	queueSize   = 256
+	defaultWorkerCount      = 4
+	defaultQueueSize        = 256
+	defaultDebounceBreaches = 3
 )
+
+func intFromEnv(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
 
 type job struct {
 	topic   string
@@ -85,10 +108,15 @@ func main() {
 		}
 	}()
 
+	workerCount := intFromEnv("INGESTION_WORKER_COUNT", defaultWorkerCount)
+	queueSize := intFromEnv("INGESTION_QUEUE_SIZE", defaultQueueSize)
+	debounceN := intFromEnv("ALERT_DEBOUNCE_BREACHES", defaultDebounceBreaches)
+	tracker := NewBreachTracker()
 	jobs := make(chan job, queueSize)
 	for i := 0; i < workerCount; i++ {
-		go worker(ctx, logger, store, jobs)
+		go worker(ctx, logger, store, tracker, debounceN, jobs)
 	}
+	logger.Info("worker pool started", "workers", workerCount, "queue_size", queueSize, "alert_debounce_breaches", debounceN)
 
 	brokerURL := os.Getenv("MQTT_BROKER_URL")
 	opts := mqtt.NewClientOptions().
@@ -131,7 +159,7 @@ func main() {
 	}
 }
 
-func worker(ctx context.Context, logger *slog.Logger, store *Store, jobs <-chan job) {
+func worker(ctx context.Context, logger *slog.Logger, store *Store, tracker *BreachTracker, debounceN int, jobs <-chan job) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -139,7 +167,7 @@ func worker(ctx context.Context, logger *slog.Logger, store *Store, jobs <-chan 
 		case j := <-jobs:
 			messagesReceived.Inc()
 			start := time.Now()
-			err := process(ctx, logger, store, j)
+			err := process(ctx, logger, store, tracker, debounceN, j)
 			processingDuration.Observe(time.Since(start).Seconds())
 			if err != nil {
 				logger.Warn("failed to process message", "topic", j.topic, "error", err)
@@ -152,7 +180,7 @@ func worker(ctx context.Context, logger *slog.Logger, store *Store, jobs <-chan 
 // through msgLogger (base logger + a fresh correlation_id) instead of the
 // bare logger, so grepping one id shows this message's complete story —
 // see docs/observability-design.md.
-func process(ctx context.Context, logger *slog.Logger, store *Store, j job) error {
+func process(ctx context.Context, logger *slog.Logger, store *Store, tracker *BreachTracker, debounceN int, j job) error {
 	msgLogger := logger.With("correlation_id", shared.NewCorrelationID())
 
 	siteID, deviceID, err := parseTopic(j.topic)
@@ -193,12 +221,12 @@ func process(ctx context.Context, logger *slog.Logger, store *Store, j job) erro
 		return err
 	}
 
-	decisions := EvaluateRules(rules, msg.Readings, active)
+	decisions := tracker.Evaluate(rules, msg.Readings, active, debounceN)
 	if len(decisions) == 0 {
 		return nil
 	}
 
-	if err := store.ApplyDecisions(ctx, msg.DeviceID, decisions, now); err != nil {
+	if err := applyDecisionsWithRetry(ctx, store, msg.DeviceID, decisions, now); err != nil {
 		return err
 	}
 	for _, d := range decisions {

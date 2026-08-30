@@ -12,7 +12,7 @@ Practice project for the Delta Electronics (Thailand) Software & Digital Enablem
 | MongoDB | Raw telemetry, application logs |
 | RESTful API | `api` service, documented with OpenAPI |
 | Monitoring/logging/observability | Prometheus + Grafana, structured JSON logs with correlation IDs (Phase 4) |
-| Troubleshooting / RCA | Deliberately injected production issues + written RCAs (Phase 6) |
+| Troubleshooting / RCA | 5 deliberately injected production incidents + written RCAs (Phase 6, [`docs/rca/`](rca/)) |
 | Git / Docker / CI-CD | Branch strategy, docker-compose, multi-stage Dockerfiles, GitHub Actions build+push to GHCR (Phase 5) |
 | Event-driven / MQTT | Mosquitto broker, ingestion service subscribes and processes telemetry |
 | Automated testing | Unit (Go testing/Jest), integration (testcontainers), E2E (Playwright) |
@@ -30,7 +30,7 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 
 **Phase 2 — Backend core services** ✅ verified end-to-end against real containers (testcontainers suite + a manual pass: fresh docker-compose stack, ingestion + api + the real simulator, full alert lifecycle exercised live)
 - `ingestion`: bounded worker-pool MQTT subscriber (`sitewatch/+/+/telemetry`) → writes raw telemetry to MongoDB `telemetry_raw`, debounced `devices.last_seen_at` updates to PostgreSQL, then runs the alert engine
-- Alert engine (`ingestion/alerts.go`, design in [`docs/alert-engine.md`](alert-engine.md)): pure rule-evaluation function + a dedup/auto-resolve state machine keyed on "at most one active alert per rule" — deliberately no debounce/hysteresis yet, that gap is a planned Phase 6 incident
+- Alert engine (`ingestion/alerts.go`, design in [`docs/alert-engine.md`](alert-engine.md)): pure rule-evaluation function + a dedup/auto-resolve state machine keyed on "at most one active alert per rule" — ~~deliberately no debounce/hysteresis yet~~ closed in Phase 6 (see below)
 - `api`: REST endpoints per [`docs/openapi.yaml`](openapi.yaml) — read-only `sites`/`devices`/`devices/{id}/telemetry` (the one endpoint reading MongoDB), full alert workflow (`list`, `acknowledge`, `resolve`), full `alert_rules` CRUD
 - Unit tests (`ingestion/alerts_test.go`, pure logic, no DB) + integration tests (`*/integration_test.go`, `testcontainers-go`, real Postgres seeded from the actual `infra/postgres/init.sql` + real MongoDB) — both wired into CI (`integration-test` job)
 - **Hardening pass** (see `CLAUDE.md` engineering standards): extracted `shared/` (env loading, Postgres/Mongo connection setup, tunable pool size) so `api` and `ingestion` stop duplicating it; added a MongoDB index on `telemetry_raw` (device_id, ts) — that query was an unindexed collection scan before; added `golangci-lint` + `gosec` to CI, which caught and fixed a real Slowloris DoS gap (no `ReadHeaderTimeout` on the API's `http.Server`) plus a few unchecked-error findings; added CORS for the Phase 3 frontend; fixed a bug where `deleteAlertRule` mislabeled any DB error as the FK-conflict case instead of checking the actual Postgres error code
@@ -66,17 +66,23 @@ Git repo, branch/PR conventions, Docker Compose (Postgres, MongoDB, Mosquitto), 
 - Closed the Phase 2 rate-limiting gap: per-IP token bucket (`golang.org/x/time/rate`), in-memory, `RATE_LIMIT_RPS`/`RATE_LIMIT_BURST` env-configurable, idle visitors swept by a background cleanup loop so the tracking map can't grow unbounded. Verified against the real running container with an actual burst of requests (`api/ratelimit.go`, `docs/deployment-hardening-design.md` for the per-IP/in-memory/`RemoteAddr` reasoning)
 - **CD (automatic deployment to a live environment) — deliberately deferred, not abandoned.** Publishing an image to a registry is delivery, not deployment; an actual live target needs external hosting (no current free-tier PaaS runs this project's full multi-service stack — Postgres + MongoDB + an MQTT broker + two Go services — for free in one place), which is real scope of its own. Revisit once the rest of the phased plan is further along; `docker compose up` locally plus a Phase 6 screen recording is the plan for showing it working in the meantime.
 
-**Phase 6 — Production-incident drills + documentation**
-Deliberately inject and then investigate:
-1. Missing index → slow query (fix with `EXPLAIN ANALYZE`, measure before/after)
-2. Leaked MQTT subscription / oversized connection pool → memory growth (diagnose with `pprof`)
-3. Consumer slower than publisher → MQTT backlog (show monitoring + backpressure/scaling fix)
-4. Mongo write succeeds, Postgres aggregate fails → inconsistency (discuss retry/compensation)
-5. Alert storm from a bad threshold → design debounce/dedup logic
+**Phase 6 — Production-incident drills + documentation** ✅ each incident verified live against the real running stack (not just unit tests) — evidence and exact numbers are in each RCA
+1. [**Missing index → slow query**](rca/01-missing-index.md) — `alerts.triggered_at` genuinely had zero index coverage; seeded 300k synthetic rows, captured real `EXPLAIN ANALYZE` before (Parallel Seq Scan, 16.7ms, 4390 buffer hits) and after adding `idx_alerts_triggered_at` (Index Scan, 0.31ms, 53 buffer hits — ≈53x)
+2. [**Leaked goroutine + unbounded MongoDB pool**](rca/02-mqtt-leak-and-pool.md) — injected a per-reconnect goroutine leak, confirmed a clean 1:1 leak rate via `pprof` (added permanently to `ingestion`'s metrics server) across forced broker reconnects, removed it; separately closed a real, pre-existing gap (MongoDB client had no pool size cap at all) with `MONGO_MAX_POOL_SIZE`, mirroring the existing `POSTGRES_MAX_CONNS` pattern
+3. [**Consumer slower than publisher → MQTT backlog**](rca/03-mqtt-backlog.md) — made `INGESTION_WORKER_COUNT`/`INGESTION_QUEUE_SIZE` actually configurable (were hardcoded, a real CLAUDE.md rule 2 gap), then drove a real backlog (1 worker vs. a 3x-faster publisher) and watched `received/s` flatline at the worker's ceiling while `dropped/s` climbed, visible on the existing Grafana panel
+4. [**MongoDB write succeeds, PostgreSQL alert evaluation fails**](rca/04-mongo-postgres-inconsistency.md) — stopped Postgres mid-flow, confirmed telemetry landed in MongoDB while the alert evaluation for that exact breach was silently skipped and never reconciled after Postgres came back; added a bounded retry (`applyDecisionsWithRetry`) narrowing the gap for transient blips, documented the remaining gap (a full outbox/reconciliation system) as a deliberate, not-yet-justified follow-up
+5. [**Alert storm from a threshold sitting in the noise band**](rca/05-alert-storm.md) — reproduced real flapping (create/resolve on every oscillating reading), then added consecutive-breach debounce (`BreachTracker`, `ALERT_DEBOUNCE_BREACHES`, default 3) and re-ran the identical input: zero decisions. Confirmed a genuine sustained breach still alerts correctly (not just suppressed)
 
-Write a 1-page RCA per incident: symptom → investigation → root cause → fix → prevention.
+Each RCA follows: symptom → investigation → root cause → fix → prevention.
 
-Final deliverables: README, architecture doc, OpenAPI docs, troubleshooting guide/runbook, RCA write-ups, test coverage report, CI pipeline evidence, demo recording.
+**A debounce-related regression this phase caught in its own verification pass**: the Playwright E2E alert tests (`frontend/e2e/alerts.spec.ts`) published a single spike reading and expected an alert immediately — true before debounce, false after. Fixed the test helper (`frontend/e2e/helpers/backend.ts`) to publish `ALERT_DEBOUNCE_BREACHES` consecutive readings, matching the new real behavior, not the old one.
+
+Final deliverables:
+- [`docs/architecture.md`](architecture.md) — new, system diagram + design rationale
+- [`docs/runbook.md`](runbook.md) — new, symptom → check → fix quick reference, one entry per incident above plus the Phase 5 rate-limit gotcha
+- [`docs/test-coverage.md`](test-coverage.md) — new, coverage numbers per module with an explanation of why unit-only coverage reads low by design (pure logic is unit tested, I/O is integration tested against real containers — see CLAUDE.md rule 1)
+- `docs/openapi.yaml` — already current, no endpoint changes this phase
+- CI pipeline evidence / demo recording — CI's own run history on GitHub Actions is the pipeline evidence; the demo recording is a manual step for whoever's presenting this project, not something automatable
 
 ## Interview story mapping
 

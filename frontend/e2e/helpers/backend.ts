@@ -31,14 +31,29 @@ async function publish(siteId: string, deviceId: string, deviceType: string, rea
   }
 }
 
-/** Publishes a reading that trips temp-sensor-01's seeded warning+critical rules. */
-export function publishTempSpike() {
-  return publish(BANGKOK_SITE_ID, TEMP_SENSOR_01_ID, "temp_sensor", { temperature_c: 33 });
+// Matches ingestion's ALERT_DEBOUNCE_BREACHES default (ingestion/main.go,
+// docs/alert-engine.md) — the alert engine only creates/auto-resolves
+// after this many consecutive same-direction readings (Phase 6, incident
+// 5: a single reading used to flap an alert on every crossing). Same kind
+// of cross-language duplication this project already accepts for the
+// MQTT topic convention (CLAUDE.md rule 3) — anchored to one documented
+// value (docs/alert-engine.md) rather than derived at runtime.
+const DEBOUNCE_BREACHES = 3;
+
+async function publishRepeated(readings: Record<string, number>) {
+  for (let i = 0; i < DEBOUNCE_BREACHES; i++) {
+    await publish(BANGKOK_SITE_ID, TEMP_SENSOR_01_ID, "temp_sensor", readings);
+  }
 }
 
-/** Publishes a normal reading — clears any active alert on temp-sensor-01 (auto-resolve). */
+/** Publishes enough consecutive readings to trip temp-sensor-01's seeded warning+critical rules. */
+export function publishTempSpike() {
+  return publishRepeated({ temperature_c: 33 });
+}
+
+/** Publishes enough consecutive normal readings to clear any active alert on temp-sensor-01 (auto-resolve). */
 export function publishTempNormal() {
-  return publish(BANGKOK_SITE_ID, TEMP_SENSOR_01_ID, "temp_sensor", { temperature_c: 22 });
+  return publishRepeated({ temperature_c: 22 });
 }
 
 /**
