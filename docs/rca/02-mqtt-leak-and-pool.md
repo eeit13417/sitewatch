@@ -130,6 +130,6 @@ driver's own default), same env-var override mechanism.
 
 ### Prevention
 
-CLAUDE.md rule 7 already calls for an explicit bound on anything that
-fans out concurrent I/O; this was simply a spot the rule hadn't been
-applied to yet. No new rule needed — just closing the gap.
+Anything that fans out concurrent I/O needs an explicit bound — this was
+simply a spot that hadn't happened yet. Nothing new to take away here,
+just a gap to close.

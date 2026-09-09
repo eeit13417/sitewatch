@@ -22,9 +22,9 @@ that exercise happens in a different module's test binary.
 
 ## Reading the low unit-only numbers correctly
 
-This isn't under-tested — it's what CLAUDE.md rule 1 (pure logic as plain
-functions, I/O behind a thin layer) produces when measured by line
-coverage: `api`'s and `ingestion`'s pure decision logic
+This isn't under-tested — it's what you get from keeping pure logic as
+plain functions and pushing I/O behind a thin layer, then measuring by
+line coverage: `api`'s and `ingestion`'s pure decision logic
 (`ratelimit.go`'s token bucket, `alerts.go`'s `EvaluateRules` and its
 debounce state machine, `compareThreshold`) is fully unit tested with no
 database, but that's a small fraction of each module's total lines — most

@@ -51,8 +51,8 @@ reading that breaks the current streak's direction resets the counter to
 accumulates enough consecutive readings in either direction to act at all
 — which is exactly the flapping case this needed to stop.
 
-`debounceN` is `ALERT_DEBOUNCE_BREACHES` (default 3, tunable per CLAUDE.md
-rule 2). The streak state itself (`ingestion/alerts.go`'s
+`debounceN` is `ALERT_DEBOUNCE_BREACHES` (default 3, tunable via env var
+rather than hardcoded). The streak state itself (`ingestion/alerts.go`'s
 `BreachTracker`) lives in ingestion's process memory, not Postgres — it
 resets on restart, which only ever delays a decision by up to
 `debounceN - 1` readings (the safe direction: never causes a missed
