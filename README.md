@@ -2,29 +2,7 @@
 
 A practice project simulating a smart energy / data center / building automation monitoring platform — built to rehearse the skills in Delta Electronics (Thailand) Software & Digital Enablement job description: full-stack development, MQTT/event-driven ingestion, observability, and production troubleshooting.
 
-Full phased plan: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md)
 
-## Architecture
-
-```
-[simulated devices] --MQTT--> [ingestion service (Go)] --> MongoDB (raw telemetry)
-                                                        --> PostgreSQL (aggregates, devices, alerts)
-                                        |
-                                        v
-                                 [alert engine]
-                                        |
-                          [REST API (Go)] <---- [React + TS dashboard]
-
-Observability: Prometheus + Grafana, structured JSON logs with correlation IDs
-```
-
-Full system diagram, database rationale, and deployment shape: [docs/architecture.md](docs/architecture.md). Troubleshooting a live problem: [docs/runbook.md](docs/runbook.md).
-
-## Status
-
-All 6 phases complete — see [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) for the full breakdown. Most recently, Phase 6 (production-incident drills): 5 incidents deliberately reproduced against the real running stack and fixed — a missing index (real `EXPLAIN ANALYZE` before/after), a leaked goroutine on MQTT reconnect (diagnosed with `pprof`), a consumer-vs-publisher backlog (visible on the Grafana throughput panel), a MongoDB/PostgreSQL inconsistency window (Postgres stopped mid-flow, then a bounded retry added), and an alert storm from a threshold sitting in sensor noise (fixed with consecutive-breach debounce). Full writeups in [`docs/rca/`](docs/rca/).
-
-`api` and `ingestion` run as real `docker-compose` services (multi-stage Dockerfiles, distroless runtime images — [design](docs/deployment-hardening-design.md)), CI publishes both images to GitHub Container Registry on every `main` commit, and `api` has a per-IP rate limiter. They both export Prometheus metrics (`/metrics`: request rate/latency, MQTT throughput, alert-engine decisions, Postgres pool stats via a shared collector) and thread a correlation ID through every log line for a given request/message. Grafana ships pre-provisioned from files with one dashboard covering all of it ([design](docs/observability-design.md)). `frontend` is a React + TS + Vite app ([design](docs/frontend-design.md)) covering site overview, device list, a live-polled telemetry chart, and the full alert workflow (list/filter/acknowledge/resolve), backed by `api`'s REST surface ([`docs/openapi.yaml`](docs/openapi.yaml)). `ingestion` subscribes to the simulator's MQTT telemetry, writes it to MongoDB, and runs the alert engine ([`docs/alert-engine.md`](docs/alert-engine.md)).
 
 ## Prerequisites
 
