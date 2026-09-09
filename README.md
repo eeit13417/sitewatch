@@ -1,18 +1,17 @@
 # SiteWatch
 
-A practice project simulating a smart energy / data center / building automation monitoring platform — built to rehearse the skills in Delta Electronics (Thailand) Software & Digital Enablement job description: full-stack development, MQTT/event-driven ingestion, observability, and production troubleshooting.
-
+A practice project simulating a smart energy / data center / building automation monitoring platform: full-stack development, MQTT/event-driven ingestion, observability, and production troubleshooting.
 
 
 ## Prerequisites
 
 - Docker Desktop with WSL integration enabled for this distro
-- Go 1.22+
-- Node 20+ (for the simulator now, and the frontend in Phase 3)
+- Go 1.25+
+- Node 20+
 
 ## Quick start
 
-`api` and `ingestion` run as real `docker-compose` services as of Phase 5
+`api` and `ingestion` run as real `docker-compose` services
 ([design](docs/deployment-hardening-design.md)) — this one command brings
 up the whole backend: Postgres, MongoDB, Mosquitto, `api`, `ingestion`,
 Prometheus, and Grafana.
@@ -111,28 +110,6 @@ cd ingestion && go test -tags=integration ./... -v
 cd api && go test -tags=integration ./... -v
 ```
 
-Coverage numbers and how to read them: [docs/test-coverage.md](docs/test-coverage.md).
-
-## Incident drills (Phase 6)
-
-`docs/rca/` has 5 write-ups of production incidents deliberately
-reproduced against the real running stack (not simulated in the
-abstract) — a missing index, a leaked goroutine, an MQTT backlog, a
-MongoDB/PostgreSQL inconsistency window, and an alert storm — each with
-the actual before/after evidence captured while fixing it.
-[docs/runbook.md](docs/runbook.md) is the quick-reference version: pick a
-symptom, get a "what to check" pointer back into the relevant RCA.
-
-Two tools those drills used that are also just generally useful:
-
-- `ingestion` exposes `/debug/pprof/*` on its metrics port (`8081` by
-  default) — `go tool pprof http://localhost:8081/debug/pprof/heap` (or
-  `.../goroutine`) for live profiling.
-- `scripts/demo-seed-bulk-alerts.sql` generates 300k synthetic `alerts`
-  rows (marked `triggered_value = -1`, safe to delete afterward) for
-  reproducing volume-dependent query-plan issues locally — not part of
-  `init.sql`'s seed data, run it manually against a running Postgres.
-
 Frontend E2E (Playwright, against the real running stack — infra + `ingestion` + `api` + the Vite dev server all need to already be up, see Quick start above):
 
 ```bash
@@ -155,5 +132,3 @@ infra/        docker-compose.yml, Mosquitto config, Postgres schema + seed data
 scripts/      repeatable verification scripts (e.g. verify-db.sh)
 docs/         architecture notes, project plan, MQTT contract, runbooks (added over time)
 ```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming and commit conventions.

@@ -80,9 +80,9 @@ never has to consider whether a backward scan is worth it.
 
 ## Prevention
 
-- CLAUDE.md rule 5 already states this exactly ("every query path needs
-  an index behind it before real data volume arrives") — this incident is
-  a concrete case study for why that rule exists, not a new rule.
+- Every query path needs an index behind it before real data volume
+  arrives — that was already the expectation going into this project;
+  this incident is just a concrete case study for why it matters.
 - Going forward: any new `ORDER BY` added to a query path — not just new
   `WHERE` filters — gets checked against existing indexes as part of the
   same review, not assumed to be free because the table already has

@@ -12,10 +12,10 @@ actually kick in, and what does it look like on the dashboards someone
 would be watching?
 
 Also surfaced along the way: `workerCount`/`queueSize` were hardcoded
-constants (`workerCount = 4`, `queueSize = 256`) — not configurable per
-CLAUDE.md rule 2, and specifically blocking this drill, since reproducing
-"consumer slower than publisher" needed the ability to deliberately run
-with fewer workers.
+constants (`workerCount = 4`, `queueSize = 256`) — not configurable,
+which specifically blocked this drill, since reproducing "consumer
+slower than publisher" needed the ability to deliberately run with
+fewer workers.
 
 ## Injection
 

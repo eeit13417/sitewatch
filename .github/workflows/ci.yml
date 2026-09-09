@@ -33,7 +33,8 @@ jobs:
           fi
 
       # Covers go vet plus staticcheck/errcheck/unused/gosec — gosec is the
-      # automated backstop for the project's security rule (see CLAUDE.md).
+      # automated backstop for keeping queries parameterized and error
+      # responses generic instead of leaking raw DB/internal error text.
       # --build-tags=integration so the testcontainers-based test files get
       # linted too, not just the non-tagged source.
       - name: golangci-lint

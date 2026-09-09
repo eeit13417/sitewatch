@@ -75,8 +75,7 @@ missed evaluations from `telemetry_raw` after the fact, would meaningfully
 close the remaining gap — but is a bigger investment than this project's
 actual reliability requirement justifies today (single ingestion
 instance, no SLA). Written down here rather than silently left
-undiscovered, matching CLAUDE.md rule 6's posture on deliberately
-deferred gaps.
+undiscovered — a deliberately deferred gap, not a missed one.
 
 ## Prevention
 

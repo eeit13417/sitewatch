@@ -70,7 +70,7 @@ This is a deliberate, accepted trade documented in
 `ingestion` is a long-running MQTT consumer with no HTTP surface beyond
 `/healthz` and `/metrics`; `api` is a stateless HTTP server with no MQTT
 involvement. They share a database layer (`shared/`, a Go module both
-`go.mod`s pull in via a `replace` directive — CLAUDE.md rule 3) but have
+`go.mod`s pull in via a `replace` directive, so it's not duplicated) but have
 nothing else in common architecturally, and scale along different axes
 (`ingestion` by message volume, `api` by request volume). Splitting them
 avoids one from blocking the other under load, and each has its own

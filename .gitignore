@@ -31,3 +31,6 @@ infra/mosquitto/log/
 .idea/
 .DS_Store
 Thumbs.db
+
+CONTRIBUTING.md
+CLAUDE.md

@@ -36,9 +36,8 @@ Multi-stage build: a `golang:1.25` builder stage compiles a static binary
 lets the runtime stage have no libc at all), then a
 `gcr.io/distroless/static-debian12:nonroot` runtime stage copies just that
 binary in. No shell, no package manager, runs as a non-root UID by
-default — smallest attack surface available for a Go binary, and CLAUDE.md
-rule 6 already treats attack surface as something to actively minimize,
-not just not actively violate. Trade-off, written down rather than
+default — smallest attack surface available for a Go binary. Trade-off,
+written down rather than
 discovered later: there's no shell to `docker exec` into for on-the-spot
 debugging — `docker logs` and the app's own `/healthz` and `/metrics`
 endpoints (Phase 4) are the tools available against a running container.
@@ -46,8 +45,8 @@ That's an acceptable trade for a stateless HTTP/MQTT service whose entire
 job is already observable through those two things.
 
 Build context is the repo root (not `api/` or `ingestion/` individually):
-both modules pull in `shared/` via a `replace` directive in `go.mod`
-(CLAUDE.md rule 3), so the Dockerfile needs to see both directories. A
+both modules pull in `shared/` via a `replace` directive in `go.mod`,
+so the Dockerfile needs to see both directories. A
 root `.dockerignore` keeps `frontend/`, `simulator/`, `.git/`, and other
 irrelevant trees out of the build context.
 
@@ -82,20 +81,18 @@ down, not silently skipped" ethos) and `latest`.
 ## 3. Rate limiting
 
 Per-IP token bucket, in-memory, via `golang.org/x/time/rate` rather than
-hand-rolling the bucket algorithm — this is exactly the kind of
-concurrency-sensitive primitive (CLAUDE.md rule 7) where reusing a
-well-tested stdlib-adjacent implementation beats a bespoke one. One
-`*rate.Limiter` per client IP, held in a struct with a mutex (real state
-to encapsulate — CLAUDE.md rule 1 says that's when a struct earns its
-keep, unlike the pure-function alert-evaluation logic elsewhere in this
-project).
+hand-rolling the bucket algorithm — reusing a well-tested implementation
+beats a bespoke one for something concurrency-sensitive. One
+`*rate.Limiter` per client IP, held in a struct with a mutex — there's
+real state to encapsulate here, unlike the pure-function alert-evaluation
+logic elsewhere in this project.
 
 - **Why per-IP and in-memory, not a shared/distributed limiter**: the API
   has no auth and runs as a single instance — there's no multi-instance
   fan-out problem to solve yet, and introducing Redis or similar just to
-  coordinate a limiter across instances that don't exist would be the
-  over-engineering CLAUDE.md rule 1 warns against. Revisit if/when the API
-  is ever actually deployed behind more than one instance.
+  coordinate a limiter across instances that don't exist would be
+  over-engineering. Revisit if/when the API is ever actually deployed
+  behind more than one instance.
 - **Client identification**: `r.RemoteAddr`. There's no reverse proxy in
   front of the API yet (no CD/live deploy — see above), so there's no
   `X-Forwarded-For` to trust or need to parse. Written down as a gap to
@@ -103,12 +100,12 @@ project).
   trusting a client-supplied `X-Forwarded-For` header without that proxy
   present would let anyone bypass the limiter by spoofing it.
 - **Bounded memory**: a map that only grows (one entry per distinct IP
-  ever seen, forever) is itself the kind of unbounded-growth problem
-  CLAUDE.md rule 7 flags. A background goroutine sweeps entries whose
-  limiter hasn't been touched in a while (tracked via a last-seen
-  timestamp alongside each limiter) on a fixed interval.
-- **Thresholds**: `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` env vars (CLAUDE.md
-  rule 2 — tunable, not hardcoded), defaulting to values well above real
+  ever seen, forever) is an unbounded-growth problem waiting to happen.
+  A background goroutine sweeps entries whose limiter hasn't been touched
+  in a while (tracked via a last-seen timestamp alongside each limiter)
+  on a fixed interval.
+- **Thresholds**: `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` env vars (tunable,
+  not hardcoded), defaulting to values well above real
   frontend usage (the busiest poller, `/alerts`, refetches every 5s per
   open tab — see `frontend/src/hooks/useAlerts.ts`) but low enough to
   actually stop a naive flood.
